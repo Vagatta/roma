@@ -2,8 +2,9 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { gameSchema } from './game';
 import type { Game } from './types';
 
-const url = import.meta.env.PUBLIC_SUPABASE_URL as string | undefined;
-const key = import.meta.env.PUBLIC_SUPABASE_ANON_KEY as string | undefined;
+const env = import.meta.env as Record<string, string | undefined>;
+const url = env.PUBLIC_SUPABASE_URL ?? env.NEXT_PUBLIC_SUPABASE_URL ?? env.SUPABASE_URL;
+const key = env.PUBLIC_SUPABASE_ANON_KEY ?? env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? env.SUPABASE_ANON_KEY;
 export const supabase: SupabaseClient | null = url && key ? createClient(url, key) : null;
 
 const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
