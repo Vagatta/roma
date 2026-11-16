@@ -1,6 +1,6 @@
 import type { Mission, Category, Difficulty, Intensity, ScoreCategory } from '../lib/types';
 
-type Seed = [string, string, string?];
+type Seed = [string, string, string?, boolean?];
 const groups: { category: Category; intensity: Intensity; score: ScoreCategory; items: Seed[] }[] = [
   { category: 'Tourist Challenge', intensity: 'playful', score: 'Adventure', items: [
     ['Encuadre de gladiadores', 'Haz una foto creativa en el Coliseo.', 'colosseum'],
@@ -23,6 +23,13 @@ const groups: { category: Category; intensity: Intensity; score: ScoreCategory; 
     ['Turista en casa', 'Deja que un local (o el mapa) decida vuestro próximo desvío.', 'popolo'],
     ['Escalera infinita', 'Sube una escalinata contando los peldaños en voz alta, con solemnidad.', 'steps'],
     ['Roma en miniatura', 'Haz que un monumento parezca diminuto con un truco de perspectiva.', 'borghese'],
+    ['La verdad o la leyenda', 'Probad la leyenda de la máscara y decidid quién se atreve primero.', 'bocca'],
+    ['Ruinas con gatos', 'Encontrad un rincón tranquilo entre las ruinas y buscad a sus habitantes felinos.', 'torre-argentina'],
+    ['Perspectiva renacentista', 'Elegid vuestro detalle favorito de la plaza diseñada por Miguel Ángel.', 'campidoglio'],
+    ['Mosaicos dorados', 'Encontrad un mosaico que os llame la atención y describid sus colores.', 'santa-maria-maggiore'],
+    ['Roma bajo Roma', 'Imaginad qué historia os gustaría descubrir bajo la basílica.', 'san-clemente'],
+    ['Geometría inesperada', 'Fotografía la pirámide y buscad líneas que formen un triángulo perfecto.', 'piramide'],
+    ['La plaza redonda', 'Rodead la plaza y escoged el mejor punto para mirar sus fuentes.', 'repubblica'],
   ] },
   { category: 'Italian Chaos', intensity: 'playful', score: 'Creativity', items: [
     ['¿Hablas italiano?', 'Pide un aperitivo o una bebida usando un poco de italiano.'],
@@ -35,8 +42,8 @@ const groups: { category: Category; intensity: Intensity; score: ScoreCategory; 
     ['Academia de acentos', 'Inventa un nombre disparatado para vuestro restaurante italiano imaginario.'],
     ['El gran debate', 'Defiende tu tipo de pasta favorito como si te fuera la vida en ello.'],
     ['Casting callejero', 'Elige una esquina como escenario de una película imaginaria.'],
-    ['Crítico de espresso', 'Describe un café o postre como un crítico gastronómico muy serio.'],
-    ['Historia de cinco palabras', 'Escribe una historia de cinco palabras sobre el lugar donde estás.'],
+    ['Crítico de espresso', 'Describe un café o postre como un crítico gastronómico muy serio.', undefined, true],
+    ['Historia de cinco palabras', 'Escribe una historia de cinco palabras sobre el lugar donde estás.', undefined, true],
     ['El guía improvisado', 'Explica un monumento inventándote todos los datos, con total seguridad.'],
     ['Acento prohibido', 'Mantén una conversación de un minuto con tu peor acento italiano.'],
     ['Menú del destino', 'Cierra los ojos y señala un plato de la carta; ese se pide.'],
@@ -45,6 +52,11 @@ const groups: { category: Category; intensity: Intensity; score: ScoreCategory; 
     ['Modo documental', 'Narra en voz baja lo que hace la otra persona como si fuera un documental.'],
     ['La cuenta atrás', 'Tienes 60 segundos para encontrar el objeto más italiano a la vista.'],
     ['Reacción exagerada', 'Reacciona al próximo monumento como si fuera lo más increíble jamás visto.', 'trevi'],
+    ['Guion de sobremesa', 'Inventad el diálogo de dos personajes que se conocen en la mesa de al lado.', undefined, true],
+    ['Mapa de sabores', 'Cada uno recomienda un sabor y crea un menú imaginario para el otro.', undefined, true],
+    ['Postal de memoria', 'Describid un lugar de Roma como si lo contarais en una carta, sin hacer una foto.', undefined, true],
+    ['Museo de bolsillo', 'Elegid un objeto cotidiano de la mesa y contad su historia como si fuera una pieza de museo.', undefined, true],
+    ['Brindis narrado', 'Inventad un brindis de una frase para el capítulo de Roma que estáis viviendo.', undefined, true],
   ] },
   { category: 'Flirt Mode', intensity: 'flirty', score: 'Chemistry', items: [
     ['La mirada', 'Si ambos estáis de acuerdo, mantén el contacto visual durante 30 segundos.'],
@@ -120,7 +132,7 @@ const groups: { category: Category; intensity: Intensity; score: ScoreCategory; 
 ];
 const points: Record<Difficulty, number> = { Easy: 5, Medium: 10, Hard: 15, Special: 20 };
 export const missions: Mission[] = groups.flatMap(({ category, intensity, score, items }, group) =>
-  items.map(([title, description, location], index) => {
+  items.map(([title, description, location, indoor], index) => {
     const difficulty: Difficulty = index % 6 === 5 ? 'Hard' : index % 3 === 0 ? 'Easy' : 'Medium';
     const requiresConsent = (group === 2 && [0, 16].includes(index)) ||
       (group === 3 && [2, 3, 6, 17, 19, 20, 22, 24, 26, 27].includes(index)) ||
@@ -129,6 +141,8 @@ export const missions: Mission[] = groups.flatMap(({ category, intensity, score,
       id: `m-${group + 1}-${index + 1}`, title, description, category, difficulty,
       points: points[difficulty], duration: 5 + (index % 4) * 10, intensity: category === 'Night Mode' && index === 4 ? 'sensual' : category === 'Temptation Mode' && index >= 16 ? 'daring' : intensity,
       ...(location ? { location } : {}), requiresConsent,
+      requiresPhoto: /fotograf|foto|retrato|postal|vídeo|video|selfie|imagen/i.test(description),
+      ...(indoor ? { indoor: true } : {}),
       mode: index % 5 === 0 && !requiresConsent ? 'solo' : 'together', scoreCategory: score,
     };
   })

@@ -4,10 +4,24 @@ export type Deck = 'Roman Chaos' | 'Flirt Mode' | 'Temptation';
 export type Difficulty = 'Easy' | 'Medium' | 'Hard' | 'Special';
 export type ScoreCategory = 'Adventure' | 'Creativity' | 'Chemistry' | 'Daring' | 'Cooperation';
 export type Player = 0 | 1;
+export type TripMoment = 'morning' | 'afternoon' | 'evening';
+export type ExpenseCategory = 'tickets' | 'food' | 'transport' | 'other';
+export interface TripExpense { id: string; day: string; category: ExpenseCategory; note: string; amount: number; }
+export type DuelCategory = 'Rapidez' | 'Memoria' | 'Estimación' | 'Creatividad';
+export type DuelMechanic = 'timed' | 'judged' | 'estimate' | 'memory';
+export type DuelMode = 'versus' | 'solo';
+export interface DuelChallenge {
+  id: string; title: string; category: DuelCategory; prompt: string; rules: string;
+  mechanic?: DuelMechanic; mode?: DuelMode; duration?: number; answer?: number;
+  memoryWords?: string[]; alternateWords?: string[]; memoryThreshold?: number; memoryOrder?: 'normal' | 'reverse';
+}
+export interface DuelResult { id: string; title: string; category: DuelCategory; winner: Player | null; date: string; detail?: string; }
+export interface DuelState { target: number; scores: [number, number]; rounds: DuelResult[]; current?: DuelChallenge; turn: Player; completedTurns: Player[]; }
+export interface MysteryState { caseId?: string; cluesFound: string[]; turn: Player; solved?: boolean; attempts: number; verdict?: string; }
 export interface Mission {
   id: string; title: string; description: string; category: Category; difficulty: Difficulty;
   points: number; duration: number; intensity: Intensity; location?: string;
-  requiresConsent: boolean; mode: 'solo' | 'together'; scoreCategory: ScoreCategory;
+  requiresConsent: boolean; requiresPhoto?: boolean; indoor?: boolean; mode: 'solo' | 'together'; scoreCategory: ScoreCategory;
 }
 export interface Card {
   id: string; title: string; description: string; deck: Deck; difficulty: Difficulty;
@@ -22,5 +36,8 @@ export interface Draw { cardId: string; date: string; status: 'drawn' | 'complet
 export interface Game {
   version: 1; names: [string, string]; start?: string; end?: string; goal: number; intensity: Intensity;
   entries: Entry[]; draws: Draw[]; favorites: string[]; visited: string[]; secrets: Secret[];
-  unlocked: string[]; doubleNext: boolean; dailyPromptDate?: string; photos?: Record<string, string>;
+  unlocked: string[]; doubleNext: boolean; dailyPromptDate?: string; photos?: Record<string, string>; route?: string[]; favoritePhotos?: string[];
+  routeMoments?: Record<string, TripMoment>; expenses?: TripExpense[]; dailyBudget?: number;
+  duel?: DuelState;
+  mystery?: MysteryState;
 }

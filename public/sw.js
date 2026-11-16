@@ -1,5 +1,5 @@
-const CACHE = 'roma-static-v3';
-const PAGES = ['/', '/game', '/missions', '/cards', '/map', '/achievements', '/settings'];
+const CACHE = 'roma-static-v7';
+const PAGES = ['/', '/game', '/missions', '/cards', '/map', '/duel', '/mystery', '/memories', '/recap', '/achievements', '/settings'];
 self.addEventListener('install', event => {
   event.waitUntil((async () => {
     const cache = await caches.open(CACHE);
@@ -34,12 +34,25 @@ self.addEventListener('activate', event => {
     await self.clients.claim();
   })());
 });
+self.addEventListener('notificationclick', event => {
+  event.notification.close();
+  const destination = new URL(event.notification.data?.url || '/map', self.location.origin);
+  const target = destination.origin === self.location.origin ? destination.href : new URL('/map', self.location.origin).href;
+  event.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(async windows => {
+    const openWindow = windows.find(client => 'focus' in client);
+    if (openWindow) {
+      if ('navigate' in openWindow) await openWindow.navigate(target);
+      return openWindow.focus();
+    }
+    return self.clients.openWindow(target);
+  }));
+});
 self.addEventListener('fetch', event => {
   if (event.request.method !== 'GET') return;
   const url = new URL(event.request.url);
   if (!['http:', 'https:'].includes(url.protocol)) return;
   const local = url.origin === self.location.origin;
-  if (!local && !['images.unsplash.com', 'tile.openstreetmap.org', 'a.tile.openstreetmap.org', 'b.tile.openstreetmap.org', 'c.tile.openstreetmap.org', 'fonts.googleapis.com', 'fonts.gstatic.com'].includes(url.hostname)) return;
+  if (!local && !['images.unsplash.com', 'thumb.wikimedia.org', 'tile.openstreetmap.org', 'a.tile.openstreetmap.org', 'b.tile.openstreetmap.org', 'c.tile.openstreetmap.org', 'fonts.googleapis.com', 'fonts.gstatic.com'].includes(url.hostname)) return;
   event.respondWith((async () => {
     const cache = await caches.open(CACHE);
     const cached = await cache.match(event.request, { ignoreSearch: local && event.request.mode === 'navigate' });
