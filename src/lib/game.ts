@@ -10,7 +10,7 @@ const entrySchema = z.object({
   title: z.string(), player: z.union([z.literal(0), z.literal(1)]), points: z.number().nonnegative(),
   shared: z.number().nonnegative(), date: z.string(), scoreCategory: z.enum(['Adventure', 'Creativity', 'Chemistry', 'Daring', 'Cooperation']),
 });
-const duelCategorySchema = z.enum(['Rapidez', 'Memoria', 'Estimación', 'Creatividad', 'Farol'])
+const duelCategorySchema = z.enum(['Rapidez', 'Memoria', 'Estimación', 'Creatividad', 'Estrategia', 'Farol'])
   .transform(category => category === 'Farol' ? 'Creatividad' : category);
 export const gameSchema = z.object({
   version: z.literal(1), names: z.tuple([z.string().min(1), z.string().min(1)]),
@@ -29,6 +29,7 @@ export const gameSchema = z.object({
     note: z.string(), amount: z.number().nonnegative(),
   })).optional(),
   dailyBudget: z.number().nonnegative().optional(),
+  adultConfirmed: z.boolean().optional(),
   duel: z.object({
     target: z.number().int().min(1).max(20),
     scores: z.tuple([z.number().int().nonnegative(), z.number().int().nonnegative()]),
@@ -39,15 +40,12 @@ export const gameSchema = z.object({
     current: z.object({
       id: z.string(), title: z.string(), category: duelCategorySchema,
       prompt: z.string(), rules: z.string(),
-      mechanic: z.enum(['timed', 'judged', 'estimate', 'memory']).optional(),
-      mode: z.enum(['versus', 'solo']).optional(), duration: z.number().int().nonnegative().optional(),
+      mechanic: z.enum(['timed', 'judged', 'estimate', 'memory', 'reflex', 'gesture']).optional(),
+      duration: z.number().int().nonnegative().optional(),
       answer: z.number().optional(), memoryWords: z.array(z.string()).optional(),
       alternateWords: z.array(z.string()).optional(),
-      memoryThreshold: z.number().int().positive().optional(),
-      memoryOrder: z.enum(['normal', 'reverse']).optional(),
     }).optional(),
     turn: z.union([z.literal(0), z.literal(1)]),
-    completedTurns: z.array(z.union([z.literal(0), z.literal(1)])),
   }).optional(),
   mystery: z.object({
     caseId: z.string().optional(),
@@ -203,7 +201,7 @@ export const achievementList = [
   { id: 'day', title: 'Día de viaje perfecto', description: 'Completa tres misiones en un día.', icon: '☼', test: (g: Game) => Object.values(g.entries.filter(e => e.kind === 'mission' || e.kind === 'secret').reduce<Record<string, number>>((acc, e) => { const day = new Date(e.date).toLocaleDateString('en-CA'); acc[day] = (acc[day] ?? 0) + 1; return acc; }, {})).some(n => n >= 3) },
   { id: 'legend', title: 'Leyenda de Roma', description: 'Alcanza el objetivo del viaje.', icon: '♛', test: (g: Game) => completedCount(g) >= g.goal },
   { id: 'collector', title: 'Coleccionista de cartas', description: 'Completa cinco cartas sacadas.', icon: '◇', test: (g: Game) => g.entries.filter(e => e.kind === 'card').length >= 5 },
-  { id: 'wanderer', title: 'El caminante', description: 'Visita los nueve lugares.', icon: '◎', test: (g: Game) => g.visited.length >= 9 },
+  { id: 'wanderer', title: 'El caminante', description: 'Visita al menos nueve lugares.', icon: '◎', test: (g: Game) => g.visited.length >= 9 },
   { id: 'surprise', title: 'Giro inesperado', description: 'Descubre una recompensa misteriosa.', icon: '★', test: (g: Game) => g.entries.some(e => e.itemId === 'mystery-reward') },
 ];
 export function withAchievements(game: Game): Game {
@@ -212,4 +210,5 @@ export function withAchievements(game: Game): Game {
 export const eligibleMissions = (game: Game) => missions.filter(m =>
   allowed(game, m.intensity) && (!m.location || game.visited.includes(m.location)) &&
   !game.entries.some(e => e.kind === 'mission' && e.itemId === m.id));
-export const eligibleCards = (game: Game, deck: string) => cards.filter(c => c.deck === deck && allowed(game, c.intensity));
+export const eligibleCards = (game: Game, deck: string) => cards.filter(c =>
+  c.deck === deck && allowed(game, c.intensity) && (c.intensity !== 'daring' || game.adultConfirmed === true));

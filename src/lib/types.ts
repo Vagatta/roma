@@ -7,16 +7,15 @@ export type Player = 0 | 1;
 export type TripMoment = 'morning' | 'afternoon' | 'evening';
 export type ExpenseCategory = 'tickets' | 'food' | 'transport' | 'other';
 export interface TripExpense { id: string; day: string; category: ExpenseCategory; note: string; amount: number; }
-export type DuelCategory = 'Rapidez' | 'Memoria' | 'Estimación' | 'Creatividad';
-export type DuelMechanic = 'timed' | 'judged' | 'estimate' | 'memory';
-export type DuelMode = 'versus' | 'solo';
+export type DuelCategory = 'Rapidez' | 'Memoria' | 'Estimación' | 'Creatividad' | 'Estrategia';
+export type DuelMechanic = 'timed' | 'judged' | 'estimate' | 'memory' | 'reflex' | 'gesture';
 export interface DuelChallenge {
   id: string; title: string; category: DuelCategory; prompt: string; rules: string;
-  mechanic?: DuelMechanic; mode?: DuelMode; duration?: number; answer?: number;
-  memoryWords?: string[]; alternateWords?: string[]; memoryThreshold?: number; memoryOrder?: 'normal' | 'reverse';
+  mechanic?: DuelMechanic; duration?: number; answer?: number;
+  memoryWords?: string[]; alternateWords?: string[];
 }
 export interface DuelResult { id: string; title: string; category: DuelCategory; winner: Player | null; date: string; detail?: string; }
-export interface DuelState { target: number; scores: [number, number]; rounds: DuelResult[]; current?: DuelChallenge; turn: Player; completedTurns: Player[]; }
+export interface DuelState { target: number; scores: [number, number]; rounds: DuelResult[]; current?: DuelChallenge; turn: Player; }
 export interface MysteryState { caseId?: string; cluesFound: string[]; turn: Player; solved?: boolean; attempts: number; verdict?: string; }
 export interface Mission {
   id: string; title: string; description: string; category: Category; difficulty: Difficulty;
@@ -38,6 +37,7 @@ export interface Game {
   entries: Entry[]; draws: Draw[]; favorites: string[]; visited: string[]; secrets: Secret[];
   unlocked: string[]; doubleNext: boolean; dailyPromptDate?: string; photos?: Record<string, string>; route?: string[]; favoritePhotos?: string[];
   routeMoments?: Record<string, TripMoment>; expenses?: TripExpense[]; dailyBudget?: number;
+  adultConfirmed?: boolean;
   duel?: DuelState;
   mystery?: MysteryState;
 }

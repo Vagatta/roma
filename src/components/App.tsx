@@ -30,10 +30,45 @@ const rainSafeIds = new Set(['pantheon', 'vatican', 'santa-maria-maggiore', 'san
 const momentLabels: Record<TripMoment, string> = { morning: 'Mañana', afternoon: 'Tarde', evening: 'Noche' };
 const expenseLabels: Record<ExpenseCategory, string> = { tickets: 'Entradas', food: 'Comida', transport: 'Transporte', other: 'Otros' };
 
+type LocationPermissionRequest = Promise<boolean> | null;
+function requestLocationPermission(): Promise<boolean> {
+  if (typeof navigator === 'undefined' || !navigator.geolocation) return Promise.resolve(false);
+  return new Promise(resolve => navigator.geolocation.getCurrentPosition(
+    () => resolve(true),
+    () => resolve(false),
+    { enableHighAccuracy: false, maximumAge: 60_000, timeout: 8_000 },
+  ));
+}
+
 function Pill({ children }: { children: React.ReactNode }) { return <span className="eyebrow">{children}</span>; }
 function Progress({ value, max }: { value: number; max: number }) { return <div className="progress-track" role="progressbar" aria-valuenow={value} aria-valuemin={0} aria-valuemax={max}><span style={{ transform: `scaleX(${Math.min(1, value / Math.max(1, max))})` }} /></div>; }
 function SectionTitle({ title, aside }: { eyebrow?: string; title: string; aside?: React.ReactNode }) {
   return <div className="section-heading"><div><h2>{title}</h2></div>{aside}</div>;
+}
+
+function JoinConsent({ actionLabel, onJoin }: { actionLabel: string; onJoin: (locationRequest: LocationPermissionRequest) => Promise<void> }) {
+  const [adultConfirmed, setAdultConfirmed] = useState(false);
+  const [requestLocation, setRequestLocation] = useState(false);
+  const [joining, setJoining] = useState(false);
+
+  async function submit(event: React.SyntheticEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!adultConfirmed || joining) return;
+    setJoining(true);
+    try {
+      const locationRequest = requestLocation ? requestLocationPermission() : null;
+      await onJoin(locationRequest);
+    } finally {
+      setJoining(false);
+    }
+  }
+
+  return <form className="join-consent-form" onSubmit={submit}>
+    <label className="consent-check"><input type="checkbox" required checked={adultConfirmed} onChange={event => setAdultConfirmed(event.target.checked)} /> Confirmo que tengo 18 años o más.</label>
+    <label className="consent-check"><input type="checkbox" checked={requestLocation} onChange={event => setRequestLocation(event.target.checked)} /> Quiero solicitar permiso de ubicación para detectar destinos cercanos. Es opcional.</label>
+    <p className="consent-copy"><ShieldCheck size={16} /> La posición exacta no se guarda ni se sincroniza. La detección funciona con el mapa abierto; si no autorizas el GPS, puedes marcar las visitas manualmente. Los avisos del sistema se activan aparte en Mapa.</p>
+    <button type="submit" className="button button-dark wide" disabled={!adultConfirmed || joining}>{joining ? 'Uniendo…' : actionLabel} <Check size={17} /></button>
+  </form>;
 }
 
 export default function App({ page }: { page: string }) {
@@ -276,7 +311,7 @@ export default function App({ page }: { page: string }) {
     const link = shareLink(game);
     try { await navigator.clipboard.writeText(link); notify('Enlace de invitación copiado'); } catch { notify('No se pudo copiar el enlace'); }
   };
-  const acceptRoomInvite = async () => {
+  const acceptRoomInvite = async (locationRequest: LocationPermissionRequest) => {
     if (!pendingInvite) return;
     if (!await ensureAnonymousSession()) {
       notify('Activa el inicio de sesión anónimo en Supabase para unirte.');
@@ -289,11 +324,26 @@ export default function App({ page }: { page: string }) {
     }
     localStorage.setItem(ROOM_KEY, pendingInvite.code);
     localStorage.removeItem(INVITE_KEY);
-    syncedGame.current = joined;
+    const confirmedGame = { ...joined, adultConfirmed: true };
+    syncedGame.current = confirmedGame;
     setRoomCode(pendingInvite.code);
-    setGame(withAchievements(joined));
+    setGame(withAchievements(confirmedGame));
     setPendingInvite(null);
-    notify('Te has unido a la partida privada.');
+    const locationAllowed = locationRequest ? await locationRequest : null;
+    notify(locationAllowed === true
+      ? 'Te has unido. Ya puedes activar la detección desde Mapa.'
+      : locationAllowed === false
+        ? 'Te has unido. El GPS no está disponible; puedes marcar las visitas manualmente.'
+        : 'Te has unido a la partida privada.');
+  };
+  const acceptSharedInvite = async (locationRequest: LocationPermissionRequest) => {
+    if (!pendingJoin) return;
+    setGame(withAchievements({ ...pendingJoin, adultConfirmed: true }));
+    setPendingJoin(null);
+    const locationAllowed = locationRequest ? await locationRequest : null;
+    notify(locationAllowed === false
+      ? 'Te has unido. El GPS no está disponible; puedes marcar las visitas manualmente.'
+      : 'Te has unido a la partida.');
   };
   useEffect(() => { if (ready && game) saveGame(game); }, [game, ready]);
   useEffect(() => () => { if (toastTimer.current) clearTimeout(toastTimer.current); }, []);
@@ -310,8 +360,8 @@ export default function App({ page }: { page: string }) {
       return next;
     });
   };
-  const startGame = (names: [string, string], goal: number, intensity: Intensity, start?: string, end?: string) => {
-    saveGame(createGame(names, goal, intensity, start, end));
+  const startGame = (names: [string, string], goal: number, intensity: Intensity, start: string | undefined, end: string | undefined, adultConfirmed: boolean) => {
+    saveGame({ ...createGame(names, goal, intensity, start, end), adultConfirmed });
     window.location.assign(page === 'home' ? '/' : `/${page}`);
   };
   if (!ready) return <div className="loading-shell"><span className="loading-mark">R</span><div className="skeleton" /></div>;
@@ -323,7 +373,20 @@ export default function App({ page }: { page: string }) {
     <button className="menu-toggle" onClick={() => setMobileMenu(!mobileMenu)} aria-label="Abrir menú">{mobileMenu ? <X size={21} /> : <Menu size={21} />}</button>
   </header>;
   const bottom = <nav className="bottom-nav" aria-label="Navegación móvil">{nav.map(item => <a key={item.href} href={item.href} className={activeNavHref === item.href ? 'active' : ''}><item.icon size={20} strokeWidth={1.6} /><span>{item.label}</span></a>)}</nav>;
-  const menu = mobileMenu && <div className="mobile-overlay"><button aria-label="Cerrar menú" onClick={() => setMobileMenu(false)}><X size={24} /></button>{[...nav, { href: '/missions', label: 'Misiones', icon: BookOpen }, { href: '/cards', label: 'Cartas', icon: Shuffle }, { href: '/map', label: 'Mapa', icon: MapPin }, { href: '/achievements', label: 'Logros', icon: Star }].map(item => <a href={item.href} key={item.href}>{item.label}<ArrowUpRight size={20} /></a>)}</div>;
+  const mobileGroups = [
+    { title: 'Modos de juego', links: nav.slice(0, 3) },
+    { title: 'Roma', links: [
+      nav[3]!,
+      { href: '/missions', label: 'Misiones', icon: BookOpen },
+      { href: '/cards', label: 'Cartas', icon: Shuffle },
+      { href: '/map', label: 'Mapa', icon: MapPin },
+      { href: '/memories', label: 'Recuerdos', icon: Camera },
+      { href: '/recap', label: 'Resumen', icon: ArrowRight },
+      { href: '/achievements', label: 'Logros', icon: Star },
+    ] },
+    { title: 'Partida', links: [nav[4]!] },
+  ];
+  const menu = mobileMenu && <div className="mobile-overlay"><button aria-label="Cerrar menú" onClick={() => setMobileMenu(false)}><X size={24} /></button><nav className="mobile-menu-scroll" aria-label="Navegación móvil">{mobileGroups.map(group => <section className="mobile-menu-group" key={group.title}><span>{group.title}</span>{group.links.map(item => <a href={item.href} key={item.href}>{item.label}<ArrowUpRight size={20} /></a>)}</section>)}</nav></div>;
   return <div className="app-shell">{header}{menu}{(!isOnline || queuedPhotoCount > 0) && <div className={`connection-banner ${isOnline ? 'pending' : 'offline'}`} role="status">{!isOnline ? 'Sin conexión · la partida se guarda en este dispositivo.' : `${queuedPhotoCount} ${queuedPhotoCount === 1 ? 'foto pendiente' : 'fotos pendientes'} de subir.`}</div>}{page === 'home' ?
     <Landing game={game} /> :
     game ? <main className="page-main">
@@ -339,13 +402,13 @@ export default function App({ page }: { page: string }) {
       {page === 'settings' && <SettingsPage game={game} update={update} onImport={next => { setGame(withAchievements(next)); notify('Progreso importado correctamente'); }} notify={notify} onPhoto={attachPhoto} photoFor={photoFor} shareGame={shareGame} />}
     </main> : <StartGate page={page} onStart={startGame} />}
     {game && page !== 'home' && bottom}<footer className="footer"><span>ROMA · EL JUEGO SECRETO</span><span>{roomCode ? 'Sala compartida para dos.' : 'Progreso guardado en este dispositivo.'}</span></footer>
-    {pendingJoin && <div className="modal-backdrop"><div className="detail-modal"><button className="modal-close" aria-label="Cerrar" onClick={() => setPendingJoin(null)}><X size={22} /></button><Pill>INVITACIÓN RECIBIDA</Pill><h2>Unirse a la partida</h2><p className="detail-description"><strong>{pendingJoin.names[0]}</strong> os ha invitado a jugar con <strong>{pendingJoin.names[1]}</strong>. Unirte sustituye la partida guardada en este dispositivo por una copia de la suya.</p><div className="complete-actions"><button className="button button-dark wide" onClick={() => { setGame(withAchievements(pendingJoin)); setPendingJoin(null); notify('¡Te has unido a la partida!'); }}>Unirme a la partida <Check size={17} /></button><button className="quiet-button" onClick={() => setPendingJoin(null)}>Seguir con mi partida actual</button></div></div></div>}
-    {pendingInvite && <div className="modal-backdrop"><div className="detail-modal"><button className="modal-close" aria-label="Cerrar" onClick={() => setPendingInvite(null)}><X size={22} /></button><Pill>INVITACIÓN PRIVADA</Pill><h2>Unirse a la partida</h2><p className="detail-description">El enlace te invita a una sala privada para dos. Al unirte, la partida de este dispositivo se sustituirá por el progreso compartido.</p><div className="complete-actions"><button className="button button-dark wide" onClick={acceptRoomInvite}>Unirme a la partida <Check size={17} /></button><button className="quiet-button" onClick={() => setPendingInvite(null)}>Ahora no</button></div></div></div>}
+    {pendingJoin && <div className="modal-backdrop"><div className="detail-modal"><button className="modal-close" aria-label="Cerrar" onClick={() => setPendingJoin(null)}><X size={22} /></button><Pill>INVITACIÓN RECIBIDA</Pill><h2>Unirse a la partida</h2><p className="detail-description"><strong>{pendingJoin.names[0]}</strong> os ha invitado a jugar con <strong>{pendingJoin.names[1]}</strong>. Unirte sustituye la partida guardada en este dispositivo por una copia de la suya.</p><JoinConsent actionLabel="Unirme a la partida" onJoin={acceptSharedInvite} /><button className="quiet-button" onClick={() => setPendingJoin(null)}>Seguir con mi partida actual</button></div></div>}
+    {pendingInvite && <div className="modal-backdrop"><div className="detail-modal"><button className="modal-close" aria-label="Cerrar" onClick={() => setPendingInvite(null)}><X size={22} /></button><Pill>INVITACIÓN PRIVADA</Pill><h2>Unirse a la partida</h2><p className="detail-description">El enlace te invita a una sala privada para dos. Al unirte, la partida de este dispositivo se sustituirá por el progreso compartido.</p><JoinConsent actionLabel="Unirme a la partida" onJoin={acceptRoomInvite} /><button className="quiet-button" onClick={() => setPendingInvite(null)}>Ahora no</button></div></div>}
     {toast && <div className={`toast ${toast.includes('Logro desbloqueado') ? 'celebration' : ''}`} role="status"><Sparkles size={18} />{toast}<button aria-label="Cerrar aviso" onClick={() => setToast('')}><X size={16} /></button></div>}
   </div>;
 }
 
-type StartGame = (names: [string, string], goal: number, intensity: Intensity, start?: string, end?: string) => void;
+type StartGame = (names: [string, string], goal: number, intensity: Intensity, start: string | undefined, end: string | undefined, adultConfirmed: boolean) => void;
 type PhotoHandler = (entryId: string, file: File) => Promise<boolean>;
 type PhotoResolver = (entryId: string) => string | undefined;
 
@@ -366,7 +429,7 @@ function StartGate({ page, onStart }: { page: string; onStart: StartGame }) {
     missions: { title: 'Misiones por descubrir.', description: 'Cread vuestra partida para elegir retos y marcar los que completéis.' },
     cards: { title: 'La próxima carta os espera.', description: 'Cread vuestra partida para sacar cartas y conservar el historial.' },
     map: { title: 'Roma es vuestro tablero.', description: 'Cread vuestra partida para marcar los lugares que visitéis.' },
-    duel: { title: 'El duelo empieza aquí.', description: 'Poned vuestros nombres y jugad por turnos: rapidez, memoria y estimación. El Duelo tiene su propio marcador.' },
+    duel: { title: 'El duelo empieza aquí.', description: 'Poned vuestros nombres y jugad por turnos: rapidez, memoria, estimación, reflejos y estrategia. El Duelo tiene su propio marcador.' },
     mystery: { title: 'Hay un caso por resolver.', description: 'Cread una partida para investigar pistas y resolver el misterio juntos.' },
     memories: { title: 'Vuestros recuerdos os esperan.', description: 'Cread una partida para guardar las fotos de vuestros retos.' },
     recap: { title: 'Vuestro capítulo romano.', description: 'Cread una partida para guardar el resumen de vuestro viaje.' },
@@ -383,19 +446,37 @@ function StartModal({ onClose, onStart, simple = false }: { onClose: () => void;
   const [intensity, setIntensity] = useState<Intensity>('flirty');
   const [start, setStart] = useState('');
   const [end, setEnd] = useState('');
-  return <div className="modal-backdrop" onMouseDown={e => { if (e.target === e.currentTarget) onClose(); }}><form className="onboarding-modal" onSubmit={e => { e.preventDefault(); if (start && end && end < start) return; onStart([names[0].trim(), names[1].trim()], goal, simple ? 'playful' : intensity, start || undefined, end || undefined); }}>
-    <button type="button" className="modal-close" onClick={onClose} aria-label="Cerrar"><X size={20} /></button><h2>Preparad la partida.</h2><p>Solo dos apodos. Sin cuentas ni preguntas personales.</p>
-    <div className="form-grid"><label>JUGADOR 1<input required maxLength={24} placeholder="Tu apodo" value={names[0]} onChange={e => setNames([e.target.value, names[1]])} /></label><label>JUGADOR 2<input required maxLength={24} placeholder="Su apodo" value={names[1]} onChange={e => setNames([names[0], e.target.value])} /></label>{!simple && <><label>INICIO DEL VIAJE <span>OPCIONAL</span><input type="date" value={start} onChange={e => setStart(e.target.value)} /></label><label>FIN DEL VIAJE <span>OPCIONAL</span><input type="date" min={start || undefined} value={end} onChange={e => setEnd(e.target.value)} /></label></>}</div>
+  const [adultConfirmed, setAdultConfirmed] = useState(false);
+  const [requestLocation, setRequestLocation] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  async function submit(event: React.SyntheticEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!adultConfirmed || submitting || (start && end && end < start)) return;
+    setSubmitting(true);
+    if (requestLocation) await requestLocationPermission();
+    onStart([names[0].trim(), names[1].trim()], goal, intensity, start || undefined, end || undefined, adultConfirmed);
+  }
+  return <div className="modal-backdrop" onMouseDown={e => { if (e.target === e.currentTarget) onClose(); }}><form className="onboarding-modal" onSubmit={submit}>
+    <button type="button" className="modal-close" onClick={onClose} aria-label="Cerrar"><X size={20} /></button><h2>Preparad la partida.</h2><p>Dos apodos y unas confirmaciones rápidas. No hace falta crear una cuenta.</p>
+    <div className="form-grid"><label>JUGADOR 1<input required maxLength={24} placeholder="Tu apodo" value={names[0]} onChange={e => setNames([e.target.value, names[1]])} /></label><label>JUGADOR 2<input required maxLength={24} placeholder="Su apodo" value={names[1]} onChange={e => setNames([names[0], e.target.value])} /></label>{!simple && <><label className="travel-date-field">INICIO DEL VIAJE <small>OPCIONAL</small><input type="date" max={end || undefined} value={start} onChange={e => setStart(e.target.value)} /></label><label className="travel-date-field">FIN DEL VIAJE <small>OPCIONAL</small><input type="date" min={start || undefined} value={end} onChange={e => setEnd(e.target.value)} /></label></>}</div>
     {!simple && <>{start && end && end < start && <p className="error">La fecha de fin debe ser posterior a la de inicio.</p>}
     <label className="full-label">OBJETIVO DE RETOS <input type="number" min="1" max="300" value={goal} onChange={e => setGoal(Number(e.target.value))} required /></label>
     <div className="full-label">ELEGID LA INTENSIDAD<div className="segmented">{(['playful', 'flirty', 'sensual', 'daring'] as Intensity[]).map(level => <button type="button" key={level} className={intensity === level ? 'chosen' : ''} onClick={() => setIntensity(level)}>{intensityLabel[level]}</button>)}</div></div>
-    <p className="consent-copy"><ShieldCheck size={16} /> Los retos íntimos son solo para adultos y siempre opcionales. Cualquiera puede omitir un reto sin penalización.</p></>}<button type="submit" className="button button-dark wide">Crear partida <ArrowUpRight size={18} /></button>
+    </>}
+    <div className="onboarding-consents">
+      <label className="consent-check"><input type="checkbox" required checked={adultConfirmed} onChange={event => setAdultConfirmed(event.target.checked)} /> Confirmamos que ambos jugadores tenemos 18 años o más.</label>
+      {!simple && <>
+      <label className="consent-check"><input type="checkbox" checked={requestLocation} onChange={event => setRequestLocation(event.target.checked)} /> Quiero solicitar permiso de ubicación para detectar destinos cercanos. Es opcional.</label>
+      <p className="consent-copy"><ShieldCheck size={16} /> Si aceptas, el navegador preguntará por el GPS al crear la partida. No guardamos ni sincronizamos coordenadas; la detección solo funciona con el mapa abierto. Si no autorizas el GPS, puedes marcar las visitas manualmente. Los avisos del sistema se configuran aparte en Mapa.</p>
+      </>}
+    </div>
+    <button type="submit" className="button button-dark wide" disabled={!adultConfirmed || submitting}>{submitting ? 'Preparando partida…' : 'Crear partida'} <ArrowUpRight size={18} /></button>
   </form></div>;
 }
 
 function Landing({ game }: { game: Game | null }) {
   const modes = [
-    { href: '/duel', number: '01', label: 'COMPETIR · PASAD EL MÓVIL', title: 'Duelo', description: 'Rondas por turnos de rapidez, memoria y estimación. Un punto por ronda; gana quien llegue primero a la meta.', status: game?.duel?.current ? 'Ronda en curso' : game?.duel?.rounds.length ? `${game.duel.scores[0]} — ${game.duel.scores[1]} · ${game.duel.rounds.length} ${game.duel.rounds.length === 1 ? 'ronda' : 'rondas'}` : 'Sin empezar', className: 'duel' },
+    { href: '/duel', number: '01', label: 'COMPETIR · PASAD EL MÓVIL', title: 'Duelo', description: 'Rondas por turnos de rapidez, memoria, estimación, reflejos y estrategia. Un punto por ronda; gana quien llegue primero a la meta.', status: game?.duel?.current ? 'Ronda en curso' : game?.duel?.rounds.length ? `${game.duel.scores[0]} — ${game.duel.scores[1]} · ${game.duel.rounds.length} ${game.duel.rounds.length === 1 ? 'ronda' : 'rondas'}` : 'Sin empezar', className: 'duel' },
     { href: '/mystery', number: '02', label: 'COOPERAR · CASO REAL', title: 'Misterio', description: 'Investigad juntos las fotografías de las hadas de Cottingley. Abrís pistas por turnos y debatís una hipótesis.', status: game?.mystery?.solved ? 'Caso resuelto' : game?.mystery?.cluesFound.length ? `${game.mystery.cluesFound.length} pistas abiertas` : 'Sin empezar', className: 'mystery' },
     { href: '/game', number: '03', label: 'PAQUETE OPCIONAL · ROMA', title: 'Roma', description: 'Misiones, cartas, mapa y recuerdos para cuando queráis jugar con la ciudad como tablero.', status: game?.entries.length ? `${completedCount(game)} retos completados` : 'Sin empezar', className: 'rome' },
   ];
@@ -434,7 +515,7 @@ function Dashboard({ game, update, notify, onPhoto, photoFor }: { game: Game; up
     }
   }
   return <>
-    <section className="dashboard-hero"><div className="dashboard-hero-content"><Pill>PAQUETE ROMA · RETOS Y LUGARES</Pill><h1>Cada día,<br /><em>una aventura.</em></h1><p>Aquí contáis misiones, cartas y destinos. El Duelo y el Misterio se juegan por separado.</p><div className="hero-actions"><a className="button button-gold" href="/missions">Buscar misión <span className="button-icon"><ArrowUpRight size={18} /></span></a><a href="/cards" className="text-link">Sacar una carta <ArrowRight size={16} /></a><a href="/map" className="text-link">Explorar mapa <ArrowRight size={16} /></a></div><a href="/" className="text-link">Elegir otro modo <ArrowRight size={16} /></a></div><div className="dashboard-hero-image" style={{ backgroundImage: `url(${photo('photo-1525874684015-58379d421a52', 1100)})` }} /></section>
+    <section className="dashboard-hero"><div className="dashboard-hero-content"><Pill>PAQUETE ROMA · RETOS Y LUGARES</Pill><h1>Cada día,<br /><em>una aventura.</em></h1><p>Aquí contáis misiones, cartas y destinos. El Duelo y el Misterio se juegan por separado.</p><div className="hero-actions dashboard-hero-actions"><a className="button button-gold" href="/missions">Jugar una misión <span className="button-icon"><ArrowUpRight size={18} /></span></a><nav className="dashboard-shortcuts" aria-label="Accesos rápidos de Roma"><a href="/cards" className="text-link">Sacar una carta <ArrowRight size={16} /></a><a href="/map" className="text-link">Explorar el mapa <ArrowRight size={16} /></a></nav></div></div><div className="dashboard-hero-image" style={{ backgroundImage: `url(${photo('photo-1525874684015-58379d421a52', 1100)})` }} /></section>
     <section className="dashboard-content"><div className="dash-overview"><div className="progress-panel"><Pill>LA GRAN AVENTURA</Pill><div className="progress-main"><strong>{completed}<span>/{game.goal}</span></strong><div><h2>Historias por escribir.</h2><p>Faltan {Math.max(0, game.goal - completed)} retos para vuestro objetivo</p></div></div><Progress value={completed} max={game.goal} /><div className="progress-meta"><span>NIVEL {Math.floor(completed / 5) + 1} · {completed < 5 ? 'LA LLEGADA' : completed < 15 ? 'EXPLORADORES' : 'LEYENDAS'}</span><span>{Math.round(Math.min(100, completed / game.goal * 100))}% COMPLETADO</span></div></div>
       <div className="score-panel"><Pill>MARCADOR</Pill><div className="score-row"><span className="avatar">01</span><div><strong>{game.names[0]}</strong><small>JUGADOR 1</small></div><b>{playerScore(game, 0)}</b></div><div className="score-row"><span className="avatar second">02</span><div><strong>{game.names[1]}</strong><small>JUGADOR 2</small></div><b>{playerScore(game, 1)}</b></div><div className="shared-score"><span>✦ &nbsp; PUNTOS COMPARTIDOS</span><strong>{sharedScore(game)} PTS</strong></div><div className="score-categories">{(['Adventure', 'Creativity', 'Chemistry', 'Daring', 'Cooperation'] as const).map(category => <span key={category}>{scoreLabel[category]} <b>{game.entries.filter(e => e.scoreCategory === category).reduce((sum, e) => sum + e.points, 0)}</b></span>)}</div></div></div>
       <div className="dashboard-grid"><div className="dashboard-primary"><SectionTitle eyebrow="UNA PEQUEÑA IDEA" title="La invitación de hoy" aside={<span className="small-note">{todayCount(game)} COMPLETADAS HOY</span>} />
@@ -558,10 +639,16 @@ function Missions({ game, update, notify, onPhoto }: { game: Game; update: (fn: 
 }
 
 function Cards({ game, update, notify }: { game: Game; update: (fn: (g: Game) => Game, msg?: string) => void; notify: (msg: string) => void }) {
+  const deckCopy: Record<Deck, string> = {
+    'Roman Chaos': 'Retos breves para mirar la ciudad con otros ojos.',
+    'Flirt Mode': 'Coqueteo con humor, complicidad y propuestas fáciles de adaptar.',
+    Temptation: 'Cartas sensuales y muy atrevidas para jugar en privado. Siempre podéis adaptar la propuesta o pasar.',
+  };
   const pendingCard = cards.find(c => c.id === game.draws.find(d => d.status === 'drawn')?.cardId);
   const [deck, setDeck] = useState<Deck>(pendingCard?.deck ?? 'Roman Chaos');
-  const [drawn, setDrawn] = useState<Card | null>(pendingCard ?? null);
-  const [flipped, setFlipped] = useState(!!pendingCard);
+  const visiblePendingCard = pendingCard && (pendingCard.intensity !== 'daring' || game.adultConfirmed) ? pendingCard : null;
+  const [drawn, setDrawn] = useState<Card | null>(visiblePendingCard ?? null);
+  const [flipped, setFlipped] = useState(!!visiblePendingCard);
   const [player, setPlayer] = useState<Player>(0);
   const [consent, setConsent] = useState(false);
   function draw() {
@@ -570,22 +657,32 @@ function Cards({ game, update, notify }: { game: Game; update: (fn: (g: Game) =>
     const last = game.draws[0]?.cardId ?? drawn?.id;
     const options = pool.filter(c => c.id !== last && !game.entries.some(e => e.kind === 'card' && e.itemId === c.id));
     const pick = randomOne(options.length ? options : pool.filter(c => c.id !== last));
-    if (!pick) return notify('No hay cartas disponibles con esta intensidad. Cámbiala en Ajustes para ver más.');
+    if (!pick) {
+      if (deck === 'Temptation' && game.intensity === 'daring' && !game.adultConfirmed) {
+        return notify('Confirmad que ambos sois mayores de 18 para desbloquear las cartas Muy atrevidas.');
+      }
+      if (deck === 'Temptation' && game.intensity !== 'sensual' && game.intensity !== 'daring') {
+        return notify('Tentación requiere intensidad Sensual o Muy atrevida. Podéis cambiarla en Ajustes.');
+      }
+      return notify('No quedan cartas nuevas de este mazo. Cambiad la intensidad en Ajustes o elegid otro.');
+    }
     setFlipped(false); setDrawn(pick); setConsent(false);
     update(g => ({ ...g, draws: [{ cardId: pick.id, date: new Date().toISOString(), status: 'drawn' }, ...g.draws] }));
     setTimeout(() => setFlipped(true), 180);
   }
   const completed = !!drawn && game.entries.some(e => e.kind === 'card' && e.itemId === drawn.id);
-  return <div className="content-wrap"><div className="page-heading"><h1>Dejadlo<br /><em>al azar.</em></h1><p>Elegid un mazo. Sacad una carta. Y a ver adónde os lleva la noche.</p></div>
+  return <div className="content-wrap"><div className="page-heading"><h1>Dejadlo<br /><em>al azar.</em></h1><p>Elegid el tono. Cada carta propone una acción concreta; podéis adaptarla o pasar sin perder puntos.</p></div>
     <div className="deck-selector">{decks.map((name, i) => <button key={name} className={`deck-option ${deck === name ? 'active' : ''}`} onClick={() => { if (drawn && !completed) update(g => ({ ...g, draws: g.draws.map(d => d.cardId === drawn.id && d.status === 'drawn' ? { ...d, status: 'skipped' } : d) })); setDeck(name); setDrawn(null); setFlipped(false); }} style={{ backgroundImage: `linear-gradient(0deg,rgba(30,17,20,.88),rgba(30,17,20,.08)),url(${photo(deckImages[i]!, 600)})` }}><strong>{deckLabel[name]}</strong></button>)}</div>
-    <div className="draw-area"><div className="draw-copy"><Pill>EL MOMENTO DE LA VERDAD</Pill><h2>¿Qué os pedirá<br /><em>Roma hoy?</em></h2><p>Cada mazo tiene 20 propuestas distintas. Sin repeticiones inmediatas, sin presión y sin respuestas equivocadas.</p><button className="button button-dark" onClick={draw}><Shuffle size={17} /> {drawn ? 'Sacar otra carta' : 'Sacar una carta'} <span className="button-icon"><ArrowUpRight size={17} /></span></button><span className="draw-count">{game.draws.length} CARTAS SACADAS HASTA AHORA</span></div>
-      <div className="card-stage"><div className={`physical-card ${flipped ? 'flipped' : ''}`}><div className="card-face card-back"><div className="card-frame"><span>ROMA · EL JUEGO SECRETO</span><strong>R<span>✦</span></strong><span>UNA INVITACIÓN OS ESPERA</span></div></div><div className="card-face card-front"><span className="card-label">{drawn && deckLabel[drawn.deck].toUpperCase()} · {drawn && difficultyLabel[drawn.difficulty].toUpperCase()}</span><span className="card-ornament">✦</span><h3>{drawn?.title}</h3><p>{drawn?.description}</p><span className="card-reward">✧ &nbsp; {drawn?.points} PUNTOS</span></div></div></div>
+    {deck === 'Temptation' && game.intensity === 'daring' && !game.adultConfirmed && <div className="adult-card-gate"><span>MUY ATREVIDA · SOLO 18+</span><label><input type="checkbox" onChange={() => update(g => ({ ...g, adultConfirmed: true }), 'Cartas Muy atrevidas desbloqueadas')} /> Confirmamos que ambos tenemos 18 años o más y elegimos jugar este nivel voluntariamente.</label><p>El permiso general no sustituye el sí de cada carta: cada propuesta íntima se confirma por separado y se puede pasar sin penalización.</p></div>}
+    {deck === 'Temptation' && (game.intensity === 'playful' || game.intensity === 'flirty') && <div className="deck-intensity-note" role="status">Este mazo empieza en intensidad Sensual. <a href="/settings">Ajustar intensidad <ArrowUpRight size={14} /></a></div>}
+    <div className="draw-area"><div className="draw-copy"><Pill>{deckLabel[deck].toUpperCase()}</Pill><h2>¿Qué os apetece<br /><em>probar hoy?</em></h2><p>{deckCopy[deck]} Sin repeticiones inmediatas; pasar nunca resta puntos.</p><button className="button button-dark" onClick={draw}><Shuffle size={17} /> {drawn ? 'Sacar otra carta' : 'Sacar una carta'} <span className="button-icon"><ArrowUpRight size={17} /></span></button><span className="draw-count">{game.draws.length} CARTAS SACADAS HASTA AHORA</span></div>
+      <div className="card-stage"><div className={`physical-card ${flipped ? 'flipped' : ''}`}><div className="card-face card-back"><div className="card-frame"><span>ROMA · EL JUEGO SECRETO</span><strong>R<span>✦</span></strong><span>UNA INVITACIÓN OS ESPERA</span></div></div><div className="card-face card-front"><span className="card-label">{drawn && deckLabel[drawn.deck].toUpperCase()} · {drawn && intensityLabel[drawn.intensity].toUpperCase()}</span><span className="card-ornament">✦</span><h3>{drawn?.title}</h3><p>{drawn?.description}</p><span className="card-reward">✧ &nbsp; {drawn?.points} PUNTOS</span></div></div></div>
     </div>
-    {drawn && flipped && <div className="card-actions"><div><strong>{deckLabel[drawn.deck]}</strong><span>{drawn.requiresConsent ? 'Interacción física opcional · requiere consentimiento mutuo' : 'Podéis hacerla a vuestra manera o pasar'}</span></div><div className="card-action-buttons"><button className={`icon-button ${game.favorites.includes(drawn.id) ? 'favorited' : ''}`} aria-label="Marcar carta como favorita" onClick={() => update(g => ({ ...g, favorites: g.favorites.includes(drawn.id) ? g.favorites.filter(id => id !== drawn.id) : [...g.favorites, drawn.id] }), 'Favoritos actualizados')}><Heart size={19} fill={game.favorites.includes(drawn.id) ? 'currentColor' : 'none'} /></button><button className="button button-outline" onClick={() => { update(g => ({ ...g, draws: g.draws.map(d => d.cardId === drawn.id && d.status === 'drawn' ? { ...d, status: 'skipped' } : d) }), 'Carta omitida sin penalización'); setDrawn(null); setFlipped(false); }}>Pasar</button><button className="button button-dark" disabled={completed} onClick={() => {
+    {drawn && flipped && <div className="card-actions"><div><strong>{deckLabel[drawn.deck]}</strong><span>{drawn.requiresConsent ? 'Esta propuesta requiere un sí claro de ambos; podéis detenerla o pasar.' : 'Adaptad la propuesta o pasad sin perder puntos.'}</span></div><div className="card-action-buttons"><button className={`icon-button ${game.favorites.includes(drawn.id) ? 'favorited' : ''}`} aria-label="Marcar carta como favorita" onClick={() => update(g => ({ ...g, favorites: g.favorites.includes(drawn.id) ? g.favorites.filter(id => id !== drawn.id) : [...g.favorites, drawn.id] }), 'Favoritos actualizados')}><Heart size={19} fill={game.favorites.includes(drawn.id) ? 'currentColor' : 'none'} /></button><button className="button button-outline" onClick={() => { update(g => ({ ...g, draws: g.draws.map(d => d.cardId === drawn.id && d.status === 'drawn' ? { ...d, status: 'skipped' } : d) }), 'Carta omitida sin penalización'); setDrawn(null); setFlipped(false); }}>Pasar</button><button className="button button-dark" disabled={completed} onClick={() => {
         if (drawn.requiresConsent && !consent) return notify('Confirmad primero el consentimiento mutuo.');
         update(g => ({ ...award(g, drawn, 'card', player), draws: g.draws.map(d => d.cardId === drawn.id && d.status === 'drawn' ? { ...d, status: 'completed' } : d) }), '¡Carta completada! Puntos añadidos a ambos jugadores.');
       }}>{completed ? 'Completada' : 'Completar'} <Check size={17} /></button></div></div>}
-    {drawn && flipped && !completed && <div className="card-confirm"><span>¿Quién la registra?</span><div className="player-switch">{game.names.map((name, i) => <button key={i} className={player === i ? 'chosen' : ''} onClick={() => setPlayer(i as Player)}>{name}</button>)}</div>{drawn.requiresConsent && <label className="consent-check"><input type="checkbox" checked={consent} onChange={e => setConsent(e.target.checked)} /> Ambos aceptáis libremente esta interacción opcional ahora mismo.</label>}</div>}
+    {drawn && flipped && !completed && <div className="card-confirm"><span>¿Quién la registra?</span><div className="player-switch">{game.names.map((name, i) => <button key={i} className={player === i ? 'chosen' : ''} onClick={() => setPlayer(i as Player)}>{name}</button>)}</div>{drawn.requiresConsent && <label className="consent-check"><input type="checkbox" checked={consent} onChange={e => setConsent(e.target.checked)} /> Ambos aceptáis participar ahora. Podéis detenerlo o pasar en cualquier momento.</label>}</div>}
     <div className="history-section"><SectionTitle eyebrow="LAS CARTAS HAN HABLADO" title="Historial de cartas" aside={<span className="small-note">{game.favorites.length} FAVORITAS</span>} /><div className="activity-list">{game.draws.slice(0, 12).map((d, i) => { const c = cards.find(card => card.id === d.cardId); return <div className="activity-row" key={`${d.cardId}-${i}`}><span className="activity-symbol">◇</span><div><strong>{c?.description}</strong><small>{c && deckLabel[c.deck].toUpperCase()} · {new Date(d.date).toLocaleDateString('es-ES')}</small></div><b className="status-text">{drawStatusLabel[d.status].toUpperCase()}</b></div>; })}{!game.draws.length && <div className="empty-state">Vuestra primera carta os espera.</div>}</div></div>
   </div>;
 }
@@ -822,7 +919,11 @@ function MysteryPage({ game, update }: { game: Game; update: (fn: (g: Game) => G
     setWrongGuess(!correct);
     update(g => {
       const current = g.mystery?.caseId === mysteryCase.id ? g.mystery : empty;
-      return { ...g, mystery: { ...current, attempts: current.attempts + 1, verdict, solved: correct } };
+      const alreadyAwarded = g.entries.some(e => e.kind === 'bonus' && e.itemId === mysteryCase.id);
+      const entries = correct && !current.solved && !alreadyAwarded
+        ? [{ id: uniqueId(), kind: 'bonus' as const, itemId: mysteryCase.id, title: 'Caso resuelto: las hadas de Cottingley', player: 0 as Player, points: 20, shared: 20, date: new Date().toISOString(), scoreCategory: 'Cooperation' as const }, ...g.entries]
+        : g.entries;
+      return { ...g, entries, mystery: { ...current, attempts: current.attempts + 1, verdict, solved: correct } };
     });
   };
   const reset = () => { setWrongGuess(false); update(g => ({ ...g, mystery: { ...empty } })); };
@@ -833,7 +934,7 @@ function MysteryPage({ game, update }: { game: Game; update: (fn: (g: Game) => G
     <section className="case-section"><SectionTitle title="Personas del expediente" /><div className="case-cast">{mysteryCase.cast.map(person => <article key={person.name}><strong>{person.name}</strong><p>{person.role}</p></article>)}</div></section>
     {state.solved ? <section className="mode-panel case-resolution"><Pill>RESOLUCIÓN DOCUMENTADA · INTENTO {state.attempts}</Pill><h2>La explicación era una composición preparada.</h2><p>{mysteryCase.reveal}</p><button className="button button-dark" onClick={reset}>Reabrir el expediente <RotateCcw size={16} /></button></section> : <>
       <section className="case-section"><div className="section-heading"><div><span className="eyebrow">REVELADLAS ALTERNANDO</span><h2>Pistas del expediente</h2></div><span className="small-note">TURNO DE {game.names[state.turn].toUpperCase()} · {state.cluesFound.length}/{mysteryCase.leads.length}</span></div><div className="clue-list">{mysteryCase.leads.map((lead, index) => <article className={state.cluesFound.includes(lead.id) ? 'revealed' : ''} key={lead.id}><div className="clue-heading"><small>DOCUMENTO {String(index + 1).padStart(2, '0')} · {lead.year}</small><h3>{lead.title}</h3></div>{state.cluesFound.includes(lead.id) ? <><p>{lead.clue}</p><em>{lead.question}</em></> : <button className="button button-outline" onClick={() => reveal(lead.id)}>Abrir pista</button>}</article>)}</div></section>
-      {state.cluesFound.length === mysteryCase.leads.length && <section className="mode-panel accusation"><Pill>DELIBERAD JUNTOS</Pill><h2>¿Qué explicación encaja con las pistas?</h2>{mysteryCase.verdicts.map(option => <button key={option.id} onClick={() => accuse(option.id)}>{option.title}</button>)}{wrongGuess && <p className="mode-feedback">Esa hipótesis no coincide con lo que se reveló después. Revisad vuestras conclusiones e intentad otra vez.</p>}</section>}
+      <section className="mode-panel accusation"><Pill>DELIBERAD JUNTOS</Pill><h2>¿Qué explicación encaja con las pistas?</h2>{mysteryCase.verdicts.map(option => <button key={option.id} onClick={() => accuse(option.id)}>{option.title}</button>)}{wrongGuess && <p className="mode-feedback">Esa hipótesis no coincide con lo que se reveló después. Revisad vuestras conclusiones e intentad otra vez.</p>}</section>
     </>}
     <section className="case-sources"><SectionTitle title="Fuentes del caso" /><p>La historia y la resolución se basan en colecciones y publicaciones de instituciones que conservan material del caso.</p>{mysteryCase.sources.map(source => <a key={source.url} href={source.url} target="_blank" rel="noreferrer">{source.label}<ArrowUpRight size={15} /></a>)}</section>
   </div>;
