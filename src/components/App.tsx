@@ -908,7 +908,10 @@ function BudgetPanel({ game, update }: { game: Game; update: (fn: (g: Game) => G
 function MysteryPage({ game, update }: { game: Game; update: (fn: (g: Game) => Game, msg?: string) => void }) {
   const empty: MysteryState = { caseId: mysteryCase.id, cluesFound: [], turn: 0, attempts: 0 };
   const state: MysteryState = game.mystery?.caseId === mysteryCase.id ? game.mystery : empty;
-  const [wrongGuess, setWrongGuess] = useState(false);
+  const [wrongGuess, setWrongGuess] = useState('');
+  const kindLabels: Record<string, string> = { circunstancia: 'CIRCUNSTANCIA', testimonio: 'TESTIMONIO', analisis: 'ANÁLISIS' };
+  const foundLeads = mysteryCase.leads.filter(lead => state.cluesFound.includes(lead.id));
+  const contradictionsFor = (verdictId: string) => foundLeads.filter(lead => lead.against.includes(verdictId));
   const reveal = (id: string) => update(g => {
     const current = g.mystery?.caseId === mysteryCase.id ? g.mystery : empty;
     if (current.cluesFound.includes(id)) return g;
@@ -916,7 +919,12 @@ function MysteryPage({ game, update }: { game: Game; update: (fn: (g: Game) => G
   });
   const accuse = (verdict: string) => {
     const correct = verdict === mysteryCase.answer;
-    setWrongGuess(!correct);
+    if (!correct) {
+      const against = contradictionsFor(verdict);
+      setWrongGuess(against.length
+        ? `Esa hipótesis choca con ${against.length === 1 ? 'esta pista' : 'estas pistas'}: ${against.map(lead => `«${lead.title}»`).join(', ')}. Revisad vuestras conclusiones e intentad otra vez.`
+        : 'Ninguna pista abierta la descarta del todo, pero no es la que mejor encaja con el conjunto. Seguid abriendo documentos o intentad otra hipótesis.');
+    } else setWrongGuess('');
     update(g => {
       const current = g.mystery?.caseId === mysteryCase.id ? g.mystery : empty;
       const alreadyAwarded = g.entries.some(e => e.kind === 'bonus' && e.itemId === mysteryCase.id);
@@ -926,15 +934,18 @@ function MysteryPage({ game, update }: { game: Game; update: (fn: (g: Game) => G
       return { ...g, entries, mystery: { ...current, attempts: current.attempts + 1, verdict, solved: correct } };
     });
   };
-  const reset = () => { setWrongGuess(false); update(g => ({ ...g, mystery: { ...empty } })); };
+  const reset = () => { setWrongGuess(''); update(g => ({ ...g, mystery: { ...empty } })); };
+  const kindCount = (kind: string) => foundLeads.filter(lead => lead.kind === kind).length;
   return <div className="content-wrap mode-page mystery-page">
     <div className="page-heading"><Pill>CASO REAL · INVESTIGACIÓN HISTÓRICA</Pill><h1>Las hadas<br /><em>de Cottingley.</em></h1><p>{mysteryCase.intro}</p><span className="case-period">{mysteryCase.period} · ENGAÑO FOTOGRÁFICO, NO DELITO</span></div>
-    <section className="case-brief"><Pill>EXPEDIENTE ABIERTO</Pill><p>Vuestra tarea: separar testimonios, prestigio y evidencia material. Revelad las pistas por turnos y elegid una explicación antes de abrir la resolución.</p></section>
+    <section className="case-brief"><Pill>EXPEDIENTE ABIERTO</Pill><p>Vuestra tarea: separar testimonios, prestigio y evidencia material. Cada pista está clasificada; dadle más peso a los análisis que a las declaraciones. Revelad los documentos por turnos y elegid una hipótesis antes de abrir la resolución.</p></section>
     <section className="case-section"><SectionTitle title="Cronología" /><div className="case-timeline">{mysteryCase.timeline.map(item => <article key={item.year}><b>{item.year}</b><p>{item.text}</p></article>)}</div></section>
     <section className="case-section"><SectionTitle title="Personas del expediente" /><div className="case-cast">{mysteryCase.cast.map(person => <article key={person.name}><strong>{person.name}</strong><p>{person.role}</p></article>)}</div></section>
     {state.solved ? <section className="mode-panel case-resolution"><Pill>RESOLUCIÓN DOCUMENTADA · INTENTO {state.attempts}</Pill><h2>La explicación era una composición preparada.</h2><p>{mysteryCase.reveal}</p><button className="button button-dark" onClick={reset}>Reabrir el expediente <RotateCcw size={16} /></button></section> : <>
-      <section className="case-section"><div className="section-heading"><div><span className="eyebrow">REVELADLAS ALTERNANDO</span><h2>Pistas del expediente</h2></div><span className="small-note">TURNO DE {game.names[state.turn].toUpperCase()} · {state.cluesFound.length}/{mysteryCase.leads.length}</span></div><div className="clue-list">{mysteryCase.leads.map((lead, index) => <article className={state.cluesFound.includes(lead.id) ? 'revealed' : ''} key={lead.id}><div className="clue-heading"><small>DOCUMENTO {String(index + 1).padStart(2, '0')} · {lead.year}</small><h3>{lead.title}</h3></div>{state.cluesFound.includes(lead.id) ? <><p>{lead.clue}</p><em>{lead.question}</em></> : <button className="button button-outline" onClick={() => reveal(lead.id)}>Abrir pista</button>}</article>)}</div></section>
-      <section className="mode-panel accusation"><Pill>DELIBERAD JUNTOS</Pill><h2>¿Qué explicación encaja con las pistas?</h2>{mysteryCase.verdicts.map(option => <button key={option.id} onClick={() => accuse(option.id)}>{option.title}</button>)}{wrongGuess && <p className="mode-feedback">Esa hipótesis no coincide con lo que se reveló después. Revisad vuestras conclusiones e intentad otra vez.</p>}</section>
+      <section className="case-section"><div className="section-heading"><div><span className="eyebrow">REVELADLOS ALTERNANDO</span><h2>Pistas del expediente</h2></div><span className="small-note">TURNO DE {game.names[state.turn].toUpperCase()} · {state.cluesFound.length}/{mysteryCase.leads.length}</span></div>
+        {state.cluesFound.length > 0 && <p className="small-note case-balance">Expediente: {kindCount('circunstancia')} circunstancias · {kindCount('testimonio')} testimonios · {kindCount('analisis')} análisis</p>}
+        <div className="clue-list">{mysteryCase.leads.map((lead, index) => <article className={state.cluesFound.includes(lead.id) ? 'revealed' : ''} key={lead.id}><div className="clue-heading"><small>DOCUMENTO {String(index + 1).padStart(2, '0')} · {lead.year} · {kindLabels[lead.kind]}</small><h3>{lead.title}</h3></div>{state.cluesFound.includes(lead.id) ? <><p>{lead.clue}</p><em>{lead.question}</em></> : <button className="button button-outline" onClick={() => reveal(lead.id)}>Abrir pista</button>}</article>)}</div></section>
+      <section className="mode-panel accusation"><Pill>DELIBERAD JUNTOS · INTENTO {state.attempts + 1}</Pill><h2>¿Qué explicación encaja con las pistas?</h2>{mysteryCase.verdicts.map(option => <button key={option.id} onClick={() => accuse(option.id)}>{option.title}</button>)}{wrongGuess && <p className="mode-feedback">{wrongGuess}</p>}</section>
     </>}
     <section className="case-sources"><SectionTitle title="Fuentes del caso" /><p>La historia y la resolución se basan en colecciones y publicaciones de instituciones que conservan material del caso.</p>{mysteryCase.sources.map(source => <a key={source.url} href={source.url} target="_blank" rel="noreferrer">{source.label}<ArrowUpRight size={15} /></a>)}</section>
   </div>;
