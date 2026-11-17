@@ -78,7 +78,7 @@ function SpeedRound({ challenge, starter, names, onFinish }: { challenge: DuelCh
 
 function MemoryRound({ challenge, starter, names, onFinish }: { challenge: DuelChallenge; starter: Player; names: [string, string]; onFinish: FinishRound }) {
   const [active, setActive] = useState<Player>(starter);
-  const [phase, setPhase] = useState<'ready' | 'study' | 'recall' | 'locked' | 'handoff'>('ready');
+  const [phase, setPhase] = useState<'ready' | 'study' | 'recall' | 'locked'>('ready');
   const [answer, setAnswer] = useState('');
   const [scores, setScores] = useState<[number | null, number | null]>([null, null]);
   const timer = useRoundTimer();
@@ -94,7 +94,7 @@ function MemoryRound({ challenge, starter, names, onFinish }: { challenge: DuelC
       setScores(next);
       setActive(starter === 0 ? 1 : 0);
       setAnswer('');
-      setPhase('handoff');
+      setPhase('ready');
     } else onFinish(higherScore(next[0] ?? 0, next[1] ?? 0),
       `${names[0]}: ${next[0]}/${listSize(0)} · ${names[1]}: ${next[1]}/${listSize(1)}`);
   };
@@ -109,8 +109,7 @@ function MemoryRound({ challenge, starter, names, onFinish }: { challenge: DuelC
   return <div className="duel-input-flow">
     <p className="duel-prompt">{challenge.prompt}</p>
     <p>Turno de {names[active]}. Cada persona recibe una lista diferente; gana quien recuerde más. En empate, nadie suma.</p>
-    {phase === 'handoff' && <button className="button button-dark" onClick={() => setPhase('ready')}>Pasar a {names[active]} <ArrowRight size={16} /></button>}
-    {phase === 'ready' && <><p>Solo {names[active]} debe mirar la pantalla. La lista desaparece sola a los 10 segundos.</p><button className="button button-dark" onClick={begin}>Mostrar palabras · 10 s <ArrowRight size={16} /></button></>}
+    {phase === 'ready' && <><p>Solo {names[active]} debe mirar las palabras. La lista desaparece sola a los 10 segundos.</p><button className="button button-dark" onClick={begin}>Mostrar palabras · 10 s <ArrowRight size={16} /></button></>}
     {phase === 'study' && <><div className="duel-clock" role="timer" aria-label={`${timer.remaining} segundos restantes`}><strong>{timer.remaining}</strong><span>MEMORIZA</span></div><div className="memory-word-list">{words.map(word => <span key={word}>{word}</span>)}</div></>}
     {(phase === 'recall' || phase === 'locked') && <form className="duel-answer-form" onSubmit={record}>
       <p>{phase === 'locked' ? 'Tiempo agotado. Registrad lo que ya estaba escrito.' : `Escribe lo que recuerdes. Quedan ${timer.remaining} segundos.`}</p>
@@ -122,7 +121,6 @@ function MemoryRound({ challenge, starter, names, onFinish }: { challenge: DuelC
 
 function EstimateRound({ challenge, starter, names, onFinish }: { challenge: DuelChallenge; starter: Player; names: [string, string]; onFinish: FinishRound }) {
   const [active, setActive] = useState<Player>(starter);
-  const [phase, setPhase] = useState<'entry' | 'handoff'>('entry');
   const [value, setValue] = useState('');
   const [answers, setAnswers] = useState<[number | null, number | null]>([null, null]);
 
@@ -136,7 +134,6 @@ function EstimateRound({ challenge, starter, names, onFinish }: { challenge: Due
       setAnswers(next);
       setValue('');
       setActive(starter === 0 ? 1 : 0);
-      setPhase('handoff');
     } else onFinish(closestEstimate(next[0] ?? 0, next[1] ?? 0, challenge.answer),
       `Solución: ${challenge.answer.toLocaleString('es-ES')} · ${names[0]}: ${next[0]} · ${names[1]}: ${next[1]}`);
   };
@@ -144,17 +141,16 @@ function EstimateRound({ challenge, starter, names, onFinish }: { challenge: Due
   return <div className="duel-input-flow">
     <p className="duel-prompt">{challenge.prompt}</p>
     <p>Cada jugador responde sin ver la cifra del otro. Gana el número más cercano; empate si quedan igual de lejos.</p>
-    {phase === 'handoff' ? <button className="button button-dark" onClick={() => setPhase('entry')}>Pasar a {names[active]} <ArrowRight size={16} /></button>
-      : <form className="duel-answer-form" onSubmit={record}>
-        <label>Estimación de {names[active]}<input autoFocus type="number" inputMode="numeric" min="0" step="1" value={value} onChange={event => setValue(event.target.value)} required /></label>
-        <button className="button button-dark" type="submit">Guardar respuesta <Check size={16} /></button>
-      </form>}
+    <form className="duel-answer-form" onSubmit={record}>
+      <label>Estimación de {names[active]}<input autoFocus type="number" inputMode="numeric" min="0" step="1" value={value} onChange={event => setValue(event.target.value)} required /></label>
+      <button className="button button-dark" type="submit">Guardar respuesta <Check size={16} /></button>
+    </form>
   </div>;
 }
 
 function ReflexRound({ challenge, starter, names, onFinish }: { challenge: DuelChallenge; starter: Player; names: [string, string]; onFinish: FinishRound }) {
   const [active, setActive] = useState<Player>(starter);
-  const [phase, setPhase] = useState<'ready' | 'waiting' | 'go' | 'feedback' | 'handoff'>('ready');
+  const [phase, setPhase] = useState<'ready' | 'waiting' | 'go' | 'feedback'>('ready');
   const [times, setTimes] = useState<[number[], number[]]>([[], []]);
   const [lastAttempt, setLastAttempt] = useState<{ ms: number; note: string } | null>(null);
   const timers = useRef<number[]>([]);
@@ -179,7 +175,7 @@ function ReflexRound({ challenge, starter, names, onFinish }: { challenge: DuelC
     }
     if (active === starter) {
       setActive(other(active));
-      setPhase('handoff');
+      setPhase('ready');
       return;
     }
     const average = (attempts: number[]) => Math.round(attempts.reduce((sum, value) => sum + value, 0) / attempts.length);
@@ -206,7 +202,6 @@ function ReflexRound({ challenge, starter, names, onFinish }: { challenge: DuelC
     <p className="duel-prompt">{challenge.prompt}</p>
     <p>{names[active]} tiene tres intentos. No pulses antes de la señal: la salida falsa penaliza 1,2 s y no responder 1,5 s. Menor media gana.</p>
     {phase === 'ready' && <button className="button button-dark" onClick={startSignal}>Preparar intento 1 de 3 <ArrowRight size={16} /></button>}
-    {phase === 'handoff' && <><p>Turno terminado: {times[starter].join(' · ')} ms. Pasa el móvil a {names[active]}.</p><button className="button button-dark" onClick={() => setPhase('ready')}>Preparar turno de {names[active]} <ArrowRight size={16} /></button></>}
     {phase === 'feedback' && <><p>Último intento: {lastAttempt?.note}, {lastAttempt?.ms} ms. {times[active].length} de 3.</p><button className="button button-dark" onClick={startSignal}>Intento {times[active].length + 1} de 3 <ArrowRight size={16} /></button></>}
     {(phase === 'waiting' || phase === 'go') && <button className={`reflex-target ${phase}`} onClick={tapTarget}>{phase === 'waiting' ? 'ESPERA…' : '¡AHORA!'}</button>}
     {phase === 'ready' && times[active].length > 0 && <p>Intentos: {times[active].join(' · ')} ms</p>}
@@ -218,7 +213,7 @@ function GestureRound({ challenge, starter, names, onFinish }: { challenge: Duel
   const other = (player: Player): Player => player === 0 ? 1 : 0;
   const [firstPicker, setFirstPicker] = useState<Player>(starter);
   const [active, setActive] = useState<Player>(starter);
-  const [phase, setPhase] = useState<'ready' | 'picking' | 'handoff' | 'result'>('ready');
+  const [phase, setPhase] = useState<'ready' | 'picking' | 'result'>('ready');
   const [choices, setChoices] = useState<[Gesture | null, Gesture | null]>([null, null]);
   const [scores, setScores] = useState<[number, number]>([0, 0]);
   const [history, setHistory] = useState<string[]>([]);
@@ -230,7 +225,6 @@ function GestureRound({ challenge, starter, names, onFinish }: { challenge: Duel
     if (active === firstPicker) {
       setChoices(nextChoices);
       setActive(other(active));
-      setPhase('handoff');
       return;
     }
 
@@ -259,9 +253,8 @@ function GestureRound({ challenge, starter, names, onFinish }: { challenge: Duel
 
   return <div className="duel-input-flow">
     <p className="duel-prompt">{challenge.prompt}</p>
-    <p>Mejor de cinco asaltos; primero en ganar tres. Elegid en secreto, pasando el móvil. Quien empieza cambia en cada asalto.</p>
+    <p>Mejor de cinco asaltos; primero en ganar tres. Elegid en secreto por turnos. Quien empieza cambia en cada asalto.</p>
     {phase === 'ready' && <button className="button button-dark" onClick={() => setPhase('picking')}>Empezar asalto 1 <ArrowRight size={16} /></button>}
-    {phase === 'handoff' && <><p>Pasa el móvil a {names[active]}. No se ha mostrado la elección anterior.</p><button className="button button-dark" onClick={() => setPhase('picking')}>Elegir en secreto <ArrowRight size={16} /></button></>}
     {phase === 'picking' && <div className="gesture-picker"><p>Elige {names[active]}:</p><div>{(Object.keys(gestureLabels) as Gesture[]).map(gesture => <button key={gesture} onClick={() => choose(gesture)}>{gestureLabels[gesture]}</button>)}</div></div>}
     {phase === 'result' && <div className="gesture-result"><p>{lastResult}</p><p>Marcador de asaltos: {scores[0]} — {scores[1]}</p><button className="button button-dark" onClick={() => setPhase('picking')}>Siguiente asalto <ArrowRight size={16} /></button></div>}
   </div>;
