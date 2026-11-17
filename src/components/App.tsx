@@ -1,4 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
+import '../styles/radar.css';
+import '../styles/expeditions.css';
 import { ArrowRight, ArrowUpRight, Bell, BookOpen, Camera, Check, ChevronRight, Compass, Crosshair, Download, Heart, Link2, MapPin, Menu, RotateCcw, Search, Settings, ShieldCheck, Shuffle, Sparkles, Star, Upload, X } from 'lucide-react';
 import { compressImage, createRoom, ensureAnonymousSession, fetchRoom, joinRoom, newRoomCode, pushRoom, roomLink, signedPhotoUrl, subscribeRoom, supabase, uploadPhoto } from '../lib/supabase';
 import { getQueuedPhoto, listQueuedPhotos, queuePhoto, removeQueuedPhoto } from '../lib/offline';
@@ -6,16 +8,27 @@ import { missions } from '../data/missions';
 import { cards } from '../data/cards';
 import { mysteryCase } from '../data/modes';
 import { locations, photo } from '../data/locations';
+import { storyForPlace } from '../data/place-stories';
+import { expeditionStage } from '../lib/expedition';
 import { closestPlaceWithin } from '../lib/location';
-import { achievementList, allowed, award, completedCount, createGame, decodeShareLink, eligibleCards, eligibleMissions, gameSchema, KEY, mergeGameStates, playerScore, randomOne, readGame, saveGame, shareLink, sharedScore, today, todayCount, uniqueId, withAchievements } from '../lib/game';
+import { RADAR_ROUNDS, radarRoundPicks } from '../lib/radar';
+import { confirmPlaceVisit, placeProofPhotoId } from '../lib/visit-proof';
+import { achievementList, allowed, award, completedCount, createGame, decodeShareLink, eligibleCards, eligibleMissions, gameSchema, KEY, mergeGameStates, playerScore, randomOne, readGame, reviewPhotoSubmission, saveGame, shareLink, sharedScore, submitPhotoMission, today, todayCount, uniqueId, withAchievements } from '../lib/game';
 import type { Card, Category, Deck, ExpenseCategory, Game, Intensity, Mission, MysteryState, Player, TripExpense, TripMoment } from '../lib/types';
 import { categoryLabel, deckLabel, difficultyLabel, drawStatusLabel, entryTitle, intensityLabel, scoreLabel } from '../lib/labels';
 import RomeMap from './RomeMap';
 import DuelPage from './DuelPage';
+import ModeRules from './ModeRules';
+import ExpeditionPostcard from './ExpeditionPostcard';
+import PlaceStoryChallenge from './PlaceStoryChallenge';
+import type { GameMode } from '../data/mode-rules';
+const RadarPage = lazy(() => import('./RadarPage'));
+const ExpeditionPanel = lazy(() => import('./ExpeditionPanel'));
 
 const nav = [
   { href: '/', label: 'Modos', icon: Compass },
   { href: '/duel', label: 'Duelo', icon: Sparkles },
+  { href: '/radar', label: 'Radar', icon: Crosshair },
   { href: '/mystery', label: 'Misterio', icon: BookOpen },
   { href: '/game', label: 'Roma', icon: MapPin },
   { href: '/settings', label: 'Ajustes', icon: Settings },
@@ -46,7 +59,7 @@ function SectionTitle({ title, aside }: { eyebrow?: string; title: string; aside
   return <div className="section-heading"><div><h2>{title}</h2></div>{aside}</div>;
 }
 
-function JoinConsent({ actionLabel, onJoin }: { actionLabel: string; onJoin: (locationRequest: LocationPermissionRequest) => Promise<void> }) {
+function JoinConsent({ actionLabel, onJoin, allowLocation = true }: { actionLabel: string; onJoin: (locationRequest: LocationPermissionRequest) => Promise<void>; allowLocation?: boolean }) {
   const [adultConfirmed, setAdultConfirmed] = useState(false);
   const [requestLocation, setRequestLocation] = useState(false);
   const [joining, setJoining] = useState(false);
@@ -56,7 +69,7 @@ function JoinConsent({ actionLabel, onJoin }: { actionLabel: string; onJoin: (lo
     if (!adultConfirmed || joining) return;
     setJoining(true);
     try {
-      const locationRequest = requestLocation ? requestLocationPermission() : null;
+      const locationRequest = allowLocation && requestLocation ? requestLocationPermission() : null;
       await onJoin(locationRequest);
     } finally {
       setJoining(false);
@@ -65,8 +78,8 @@ function JoinConsent({ actionLabel, onJoin }: { actionLabel: string; onJoin: (lo
 
   return <form className="join-consent-form" onSubmit={submit}>
     <label className="consent-check"><input type="checkbox" required checked={adultConfirmed} onChange={event => setAdultConfirmed(event.target.checked)} /> Confirmo que tengo 18 años o más.</label>
-    <label className="consent-check"><input type="checkbox" checked={requestLocation} onChange={event => setRequestLocation(event.target.checked)} /> Quiero solicitar permiso de ubicación para detectar destinos cercanos. Es opcional.</label>
-    <p className="consent-copy"><ShieldCheck size={16} /> La posición exacta no se guarda ni se sincroniza. La detección funciona con el mapa abierto; si no autorizas el GPS, puedes marcar las visitas manualmente. Los avisos del sistema se activan aparte en Mapa.</p>
+    {allowLocation && <><label className="consent-check"><input type="checkbox" checked={requestLocation} onChange={event => setRequestLocation(event.target.checked)} /> Quiero solicitar permiso de ubicación para detectar destinos cercanos. Es opcional.</label>
+    <p className="consent-copy"><ShieldCheck size={16} /> La posición exacta no se guarda ni se sincroniza. La detección funciona con el mapa abierto; si no autorizas el GPS, puedes marcar las visitas manualmente. Los avisos del sistema se activan aparte en Mapa.</p></>}
     <button type="submit" className="button button-dark wide" disabled={!adultConfirmed || joining}>{joining ? 'Uniendo…' : actionLabel} <Check size={17} /></button>
   </form>;
 }
@@ -374,9 +387,9 @@ export default function App({ page }: { page: string }) {
   </header>;
   const bottom = <nav className="bottom-nav" aria-label="Navegación móvil">{nav.map(item => <a key={item.href} href={item.href} className={activeNavHref === item.href ? 'active' : ''}><item.icon size={20} strokeWidth={1.6} /><span>{item.label}</span></a>)}</nav>;
   const mobileGroups = [
-    { title: 'Modos de juego', links: nav.slice(0, 3) },
+    { title: 'Modos de juego', links: nav.slice(0, 4) },
     { title: 'Roma', links: [
-      nav[3]!,
+      nav[4]!,
       { href: '/missions', label: 'Misiones', icon: BookOpen },
       { href: '/cards', label: 'Cartas', icon: Shuffle },
       { href: '/map', label: 'Mapa', icon: MapPin },
@@ -384,26 +397,27 @@ export default function App({ page }: { page: string }) {
       { href: '/recap', label: 'Resumen', icon: ArrowRight },
       { href: '/achievements', label: 'Logros', icon: Star },
     ] },
-    { title: 'Partida', links: [nav[4]!] },
+    { title: 'Partida', links: [nav[5]!] },
   ];
   const menu = mobileMenu && <div className="mobile-overlay"><button aria-label="Cerrar menú" onClick={() => setMobileMenu(false)}><X size={24} /></button><nav className="mobile-menu-scroll" aria-label="Navegación móvil">{mobileGroups.map(group => <section className="mobile-menu-group" key={group.title}><span>{group.title}</span>{group.links.map(item => <a href={item.href} key={item.href}>{item.label}<ArrowUpRight size={20} /></a>)}</section>)}</nav></div>;
   return <div className="app-shell">{header}{menu}{(!isOnline || queuedPhotoCount > 0) && <div className={`connection-banner ${isOnline ? 'pending' : 'offline'}`} role="status">{!isOnline ? 'Sin conexión · la partida se guarda en este dispositivo.' : `${queuedPhotoCount} ${queuedPhotoCount === 1 ? 'foto pendiente' : 'fotos pendientes'} de subir.`}</div>}{page === 'home' ?
     <Landing game={game} /> :
     game ? <main className="page-main">
       {page === 'game' && <Dashboard game={game} update={update} notify={notify} onPhoto={attachPhoto} photoFor={photoFor} />}
-      {page === 'missions' && <Missions game={game} update={update} notify={notify} onPhoto={attachPhoto} />}
+      {page === 'missions' && <Missions game={game} update={update} notify={notify} onPhoto={attachPhoto} photoFor={photoFor} />}
       {page === 'cards' && <Cards game={game} update={update} notify={notify} />}
-      {page === 'map' && <MapPage game={game} update={update} />}
+      {page === 'map' && <MapPage game={game} update={update} onPhoto={attachPhoto} photoFor={photoFor} />}
       {page === 'duel' && <DuelPage game={game} update={update} />}
+      {page === 'radar' && <Suspense fallback={<div className="loading-shell">Cargando Radar…</div>}><RadarPage game={game} update={update} shared={Boolean(roomCode)} /></Suspense>}
       {page === 'mystery' && <MysteryPage game={game} update={update} />}
       {page === 'memories' && <Memories game={game} update={update} photoFor={photoFor} />}
-      {page === 'recap' && <TripRecap game={game} photoFor={photoFor} notify={notify} />}
+      {page === 'recap' && <TripRecap game={game} update={update} photoFor={photoFor} notify={notify} />}
       {page === 'achievements' && <Achievements game={game} />}
       {page === 'settings' && <SettingsPage game={game} update={update} onImport={next => { setGame(withAchievements(next)); notify('Progreso importado correctamente'); }} notify={notify} onPhoto={attachPhoto} photoFor={photoFor} shareGame={shareGame} />}
     </main> : <StartGate page={page} onStart={startGame} />}
     {game && page !== 'home' && bottom}<footer className="footer"><span>ROMA · EL JUEGO SECRETO</span><span>{roomCode ? 'Sala compartida para dos.' : 'Progreso guardado en este dispositivo.'}</span></footer>
-    {pendingJoin && <div className="modal-backdrop"><div className="detail-modal"><button className="modal-close" aria-label="Cerrar" onClick={() => setPendingJoin(null)}><X size={22} /></button><Pill>INVITACIÓN RECIBIDA</Pill><h2>Unirse a la partida</h2><p className="detail-description"><strong>{pendingJoin.names[0]}</strong> os ha invitado a jugar con <strong>{pendingJoin.names[1]}</strong>. Unirte sustituye la partida guardada en este dispositivo por una copia de la suya.</p><JoinConsent actionLabel="Unirme a la partida" onJoin={acceptSharedInvite} /><button className="quiet-button" onClick={() => setPendingJoin(null)}>Seguir con mi partida actual</button></div></div>}
-    {pendingInvite && <div className="modal-backdrop"><div className="detail-modal"><button className="modal-close" aria-label="Cerrar" onClick={() => setPendingInvite(null)}><X size={22} /></button><Pill>INVITACIÓN PRIVADA</Pill><h2>Unirse a la partida</h2><p className="detail-description">El enlace te invita a una sala privada para dos. Al unirte, la partida de este dispositivo se sustituirá por el progreso compartido.</p><JoinConsent actionLabel="Unirme a la partida" onJoin={acceptRoomInvite} /><button className="quiet-button" onClick={() => setPendingInvite(null)}>Ahora no</button></div></div>}
+    {pendingJoin && <div className="modal-backdrop"><div className="detail-modal"><button className="modal-close" aria-label="Cerrar" onClick={() => setPendingJoin(null)}><X size={22} /></button><Pill>INVITACIÓN RECIBIDA</Pill><h2>Unirse a la partida</h2><p className="detail-description"><strong>{pendingJoin.names[0]}</strong> os ha invitado a jugar con <strong>{pendingJoin.names[1]}</strong>. Unirte sustituye la partida guardada en este dispositivo por una copia de la suya.</p><JoinConsent actionLabel="Unirme a la partida" onJoin={acceptSharedInvite} allowLocation={!['duel', 'radar', 'mystery'].includes(page)} /><button className="quiet-button" onClick={() => setPendingJoin(null)}>Seguir con mi partida actual</button></div></div>}
+    {pendingInvite && <div className="modal-backdrop"><div className="detail-modal"><button className="modal-close" aria-label="Cerrar" onClick={() => setPendingInvite(null)}><X size={22} /></button><Pill>INVITACIÓN PRIVADA</Pill><h2>Unirse a la partida</h2><p className="detail-description">El enlace te invita a una sala privada para dos. Al unirte, la partida de este dispositivo se sustituirá por el progreso compartido.</p><JoinConsent actionLabel="Unirme a la partida" onJoin={acceptRoomInvite} allowLocation={!['duel', 'radar', 'mystery'].includes(page)} /><button className="quiet-button" onClick={() => setPendingInvite(null)}>Ahora no</button></div></div>}
     {toast && <div className={`toast ${toast.includes('Logro desbloqueado') ? 'celebration' : ''}`} role="status"><Sparkles size={18} />{toast}<button aria-label="Cerrar aviso" onClick={() => setToast('')}><X size={16} /></button></div>}
   </div>;
 }
@@ -424,12 +438,14 @@ function PhotoButton({ entryId, photo, onPhoto, pending }: { entryId: string; ph
 
 function StartGate({ page, onStart }: { page: string; onStart: StartGame }) {
   const [showStart, setShowStart] = useState(false);
+  const mode: GameMode | null = page === 'duel' || page === 'radar' || page === 'mystery' || page === 'game' ? page : null;
   const chapters: Record<string, { title: string; description: string }> = {
     game: { title: 'La partida empieza aquí.', description: 'Poned vuestros apodos para llevar el marcador y guardar la aventura.' },
     missions: { title: 'Misiones por descubrir.', description: 'Cread vuestra partida para elegir retos y marcar los que completéis.' },
     cards: { title: 'La próxima carta os espera.', description: 'Cread vuestra partida para sacar cartas y conservar el historial.' },
     map: { title: 'Roma es vuestro tablero.', description: 'Cread vuestra partida para marcar los lugares que visitéis.' },
     duel: { title: 'El duelo empieza aquí.', description: 'Poned vuestros nombres y jugad por turnos: rapidez, memoria, estimación, reflejos y estrategia. El Duelo tiene su propio marcador.' },
+    radar: { title: '¿Sabes qué va a elegir?', description: 'Dos móviles, siete dilemas y una apuesta: elegid vuestra respuesta y adivinad la del otro.' },
     mystery: { title: 'Hay un caso por resolver.', description: 'Cread una partida para investigar pistas y resolver el misterio juntos.' },
     memories: { title: 'Vuestros recuerdos os esperan.', description: 'Cread una partida para guardar las fotos de vuestros retos.' },
     recap: { title: 'Vuestro capítulo romano.', description: 'Cread una partida para guardar el resumen de vuestro viaje.' },
@@ -437,7 +453,7 @@ function StartGate({ page, onStart }: { page: string; onStart: StartGame }) {
     settings: { title: 'Vuestra partida, a vuestra manera.', description: 'Poned vuestros apodos para configurar el juego y guardar el progreso.' },
   };
   const chapter = chapters[page] ?? chapters.game!;
-  return <main className="start-gate"><div className="start-gate-image" style={{ backgroundImage: `url(${photo(heroImage, 1200)})` }} /><div className="start-gate-content"><h1>{chapter.title}</h1><p>{chapter.description}</p><button className="button button-dark" onClick={() => setShowStart(true)}>Crear partida <ArrowUpRight size={18} /></button><a className="under-link" href="/">Elegir otro modo <ArrowRight size={16} /></a></div>{showStart && <StartModal onClose={() => setShowStart(false)} onStart={onStart} simple={page === 'duel' || page === 'mystery'} />}</main>;
+  return <main className="start-gate"><div className="start-gate-image" style={{ backgroundImage: `url(${photo(heroImage, 1200)})` }} /><div className="start-gate-content"><h1>{chapter.title}</h1><p>{chapter.description}</p>{mode && <ModeRules mode={mode} initiallyOpen />}<button className="button button-dark" onClick={() => setShowStart(true)}>Crear partida <ArrowUpRight size={18} /></button><a className="under-link" href="/">Elegir otro modo <ArrowRight size={16} /></a></div>{showStart && <StartModal onClose={() => setShowStart(false)} onStart={onStart} simple={page === 'duel' || page === 'mystery' || page === 'radar'} />}</main>;
 }
 
 function StartModal({ onClose, onStart, simple = false }: { onClose: () => void; onStart: StartGame; simple?: boolean }) {
@@ -475,15 +491,17 @@ function StartModal({ onClose, onStart, simple = false }: { onClose: () => void;
 }
 
 function Landing({ game }: { game: Game | null }) {
+  const radarFinished = game?.radar ? radarRoundPicks(game, RADAR_ROUNDS - 1).every(Boolean) : false;
   const modes = [
     { href: '/duel', number: '01', label: 'COMPETIR · RETOS POR TURNOS', title: 'Duelo', description: 'Rondas por turnos de rapidez, memoria, estimación, reflejos y estrategia. Un punto por ronda; gana quien llegue primero a la meta.', status: game?.duel?.current ? 'Ronda en curso' : game?.duel?.rounds.length ? `${game.duel.scores[0]} — ${game.duel.scores[1]} · ${game.duel.rounds.length} ${game.duel.rounds.length === 1 ? 'ronda' : 'rondas'}` : 'Sin empezar', className: 'duel' },
-    { href: '/mystery', number: '02', label: 'COOPERAR · CASO REAL', title: 'Misterio', description: 'Investigad juntos las fotografías de las hadas de Cottingley. Abrís pistas por turnos y debatís una hipótesis.', status: game?.mystery?.solved ? 'Caso resuelto' : game?.mystery?.cluesFound.length ? `${game.mystery.cluesFound.length} pistas abiertas` : 'Sin empezar', className: 'mystery' },
-    { href: '/game', number: '03', label: 'PAQUETE OPCIONAL · ROMA', title: 'Roma', description: 'Misiones, cartas, mapa y recuerdos para cuando queráis jugar con la ciudad como tablero.', status: game?.entries.length ? `${completedCount(game)} retos completados` : 'Sin empezar', className: 'rome' },
+    { href: '/radar', number: '02', label: 'PREDECIR · SIN PASAR EL MÓVIL', title: 'Radar', description: 'Elegid entre tres respuestas a dilemas absurdos y tratad de adivinar la elección de la otra persona.', status: radarFinished ? 'Partida terminada' : game?.radar ? `Ronda ${game.radar.round + 1} de ${RADAR_ROUNDS}` : 'Sin empezar', className: 'radar' },
+    { href: '/mystery', number: '03', label: 'COOPERAR · CASO REAL', title: 'Misterio', description: 'Investigad juntos las fotografías de las hadas de Cottingley. Abrís pistas por turnos y debatís una hipótesis.', status: game?.mystery?.solved ? 'Caso resuelto' : game?.mystery?.cluesFound.length ? `${game.mystery.cluesFound.length} pistas abiertas` : 'Sin empezar', className: 'mystery' },
+    { href: '/game', number: '04', label: 'PAQUETE OPCIONAL · ROMA', title: 'Roma', description: 'Misiones, cartas, mapa y recuerdos para cuando queráis jugar con la ciudad como tablero.', status: game?.entries.length ? `${completedCount(game)} retos completados` : 'Sin empezar', className: 'rome' },
   ];
   return <main className="mode-home">
-    <header className="mode-home-intro"><Pill>ROMA · EL JUEGO SECRETO</Pill><h1>Elegid cómo <br /><em>queréis jugar.</em></h1><p>{game ? `Partida de ${game.names[0]} y ${game.names[1]}. Cada modo tiene sus propias reglas y progreso.` : 'Dos personas, una partida. Podéis competir, investigar juntos o jugar con Roma como escenario. No necesitáis viajar para empezar.'}</p></header>
+    <header className="mode-home-intro"><Pill>ROMA · EL JUEGO SECRETO</Pill><h1>Elegid cómo <br /><em>queréis jugar.</em></h1><p>{game ? `Partida de ${game.names[0]} y ${game.names[1]}. Cada modo tiene sus propias reglas y progreso.` : 'Dos personas, una partida. Competid, intentad leeros la mente, investigad o jugad con Roma como escenario opcional. No necesitáis viajar para empezar.'}</p></header>
     <section className="mode-home-list" aria-label="Modos de juego">{modes.map(mode => <a className={`mode-home-card ${mode.className}`} key={mode.href} href={mode.href}><span className="mode-home-number">{mode.number}</span><div><span className="eyebrow">{mode.label}</span><h2>{mode.title}</h2><p>{mode.description}</p><small>{game ? mode.status : 'Solo necesitáis dos apodos'}</small></div><span className="mode-home-arrow" aria-hidden="true"><ArrowUpRight size={25} /></span></a>)}</section>
-    <p className="mode-home-note">La partida conserva vuestros nombres, pero los puntos del Duelo no se mezclan con los retos de Roma. El Misterio se resuelve en equipo.</p>
+    <p className="mode-home-note">Duelo y Radar tienen marcadores independientes. El Misterio se resuelve en equipo; Roma es una aventura opcional.</p>
   </main>;
 }
 
@@ -493,6 +511,9 @@ function Dashboard({ game, update, notify, onPhoto, photoFor }: { game: Game; up
   const [activePlayer, setActivePlayer] = useState<Player>(0);
   const daily = eligibleMissions(game).find(m => !m.location) ?? eligibleMissions(game)[0];
   const secrets = game.secrets.filter(s => s.player === activePlayer);
+  const activeMission = missions.find(mission => mission.id === game.activeMissionId);
+  const pendingDraw = game.draws.find(draw => draw.status === 'drawn');
+  const activeCard = cards.find(card => card.id === pendingDraw?.cardId);
   function newSecret() {
     const pool = missions.filter(m => m.mode === 'solo' && allowed(game, m.intensity) && !m.requiresConsent && (!m.location || game.visited.includes(m.location)) && !game.secrets.some(s => s.missionId === m.id && s.player === activePlayer));
     const pick = randomOne(pool);
@@ -515,7 +536,10 @@ function Dashboard({ game, update, notify, onPhoto, photoFor }: { game: Game; up
     }
   }
   return <>
-    <section className="dashboard-hero"><div className="dashboard-hero-content"><Pill>PAQUETE ROMA · RETOS Y LUGARES</Pill><h1>Cada día,<br /><em>una aventura.</em></h1><p>Aquí contáis misiones, cartas y destinos. El Duelo y el Misterio se juegan por separado.</p><div className="hero-actions dashboard-hero-actions"><a className="button button-gold" href="/missions">Jugar una misión <span className="button-icon"><ArrowUpRight size={18} /></span></a><nav className="dashboard-shortcuts" aria-label="Accesos rápidos de Roma"><a href="/cards" className="text-link">Sacar una carta <ArrowRight size={16} /></a><a href="/map" className="text-link">Explorar el mapa <ArrowRight size={16} /></a></nav></div></div><div className="dashboard-hero-image" style={{ backgroundImage: `url(${photo('photo-1525874684015-58379d421a52', 1100)})` }} /></section>
+    <section className="dashboard-hero"><div className="dashboard-hero-content"><Pill>PAQUETE ROMA · RETOS Y LUGARES</Pill><h1>Cada día,<br /><em>una aventura.</em></h1><p>Las misiones avanzan vuestra meta; las cartas suman puntos y las visitas desbloquean retos. Duelo y Radar tienen sus propios marcadores.</p><div className="hero-actions dashboard-hero-actions"><a className="button button-gold" href="/missions">Jugar una misión <span className="button-icon"><ArrowUpRight size={18} /></span></a><nav className="dashboard-shortcuts" aria-label="Accesos rápidos de Roma"><a href="/cards" className="text-link">Sacar una carta <ArrowRight size={16} /></a><a href="/map" className="text-link">Explorar el mapa <ArrowRight size={16} /></a></nav></div></div><div className="dashboard-hero-image" style={{ backgroundImage: `url(${photo('photo-1525874684015-58379d421a52', 1100)})` }} /></section>
+    <ModeRules mode="game" initiallyOpen={!game.entries.some(entry => entry.kind === 'mission' || entry.kind === 'secret' || entry.kind === 'card') && game.visited.length === 0 && game.draws.length === 0} />
+    <Suspense fallback={<div className="expedition-loading">Preparando expediciones…</div>}><ExpeditionPanel game={game} update={update} notify={notify} photoFor={photoFor} /></Suspense>
+    {(activeMission || activeCard) && <section className="shared-activity-banner"><span className="eyebrow">EN CURSO · SINCRONIZADO</span>{activeMission && <div><div><small>MISIÓN ACTIVA</small><strong>{activeMission.title}</strong></div><a className="button button-outline" href={`/missions?mission=${activeMission.id}`}>Abrir misión</a></div>}{activeCard && <div><div><small>CARTA SACADA</small><strong>{activeCard.title}</strong></div><a className="button button-outline" href="/cards">Abrir carta</a></div>}<p>Ambos podéis ver y continuar el reto desde vuestra partida compartida.</p></section>}
     <section className="dashboard-content"><div className="dash-overview"><div className="progress-panel"><Pill>LA GRAN AVENTURA</Pill><div className="progress-main"><strong>{completed}<span>/{game.goal}</span></strong><div><h2>Historias por escribir.</h2><p>Faltan {Math.max(0, game.goal - completed)} retos para vuestro objetivo</p></div></div><Progress value={completed} max={game.goal} /><div className="progress-meta"><span>NIVEL {Math.floor(completed / 5) + 1} · {completed < 5 ? 'LA LLEGADA' : completed < 15 ? 'EXPLORADORES' : 'LEYENDAS'}</span><span>{Math.round(Math.min(100, completed / game.goal * 100))}% COMPLETADO</span></div></div>
       <div className="score-panel"><Pill>MARCADOR</Pill><div className="score-row"><span className="avatar">01</span><div><strong>{game.names[0]}</strong><small>JUGADOR 1</small></div><b>{playerScore(game, 0)}</b></div><div className="score-row"><span className="avatar second">02</span><div><strong>{game.names[1]}</strong><small>JUGADOR 2</small></div><b>{playerScore(game, 1)}</b></div><div className="shared-score"><span>✦ &nbsp; PUNTOS COMPARTIDOS</span><strong>{sharedScore(game)} PTS</strong></div><div className="score-categories">{(['Adventure', 'Creativity', 'Chemistry', 'Daring', 'Cooperation'] as const).map(category => <span key={category}>{scoreLabel[category]} <b>{game.entries.filter(e => e.scoreCategory === category).reduce((sum, e) => sum + e.points, 0)}</b></span>)}</div></div></div>
       <div className="dashboard-grid"><div className="dashboard-primary"><SectionTitle eyebrow="UNA PEQUEÑA IDEA" title="La invitación de hoy" aside={<span className="small-note">{todayCount(game)} COMPLETADAS HOY</span>} />
@@ -534,44 +558,85 @@ function Dashboard({ game, update, notify, onPhoto, photoFor }: { game: Game; up
   </>;
 }
 
-function Memories({ game, update, photoFor }: { game: Game; update: (fn: (g: Game) => Game, msg?: string) => void; photoFor: PhotoResolver }) {
-  const [sortBy, setSortBy] = useState<'date' | 'place'>('date');
-  const memories = game.entries.flatMap(entry => {
+function PhotoCaptionEditor({ id, game, update }: { id: string; game: Game; update: (fn: (g: Game) => Game, msg?: string) => void }) {
+  const caption = game.photoCaptions?.[id] ?? '';
+  const [draft, setDraft] = useState(caption);
+  useEffect(() => setDraft(caption), [id, caption]);
+  const save = (event: React.SyntheticEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const text = draft.trim();
+    update(g => {
+      const captions = { ...g.photoCaptions };
+      if (text) captions[id] = text;
+      else delete captions[id];
+      return { ...g, photoCaptions: captions };
+    }, text ? 'Frase guardada en el álbum compartido.' : 'Frase eliminada del álbum.');
+  };
+  return <form className="photo-caption-editor" onSubmit={save}><label htmlFor={`caption-${id}`}>Tu frase para esta foto</label><div><input id={`caption-${id}`} maxLength={120} value={draft} onChange={event => setDraft(event.target.value)} placeholder="¿Qué pasó en ese momento?" /><button type="submit" disabled={draft.trim() === caption}>Guardar</button></div></form>;
+}
+
+interface MemoryItem { id: string; title: string; place: string; date: Date | null; by: string; url?: string; }
+function collectMemories(game: Game, photoFor: PhotoResolver): MemoryItem[] {
+  const entryPhotos = game.entries.flatMap(entry => {
     if (!game.photos?.[entry.id]) return [];
     const locationId = missions.find(mission => mission.id === entry.itemId)?.location;
-    const location = locations.find(place => place.id === locationId);
     return [{
-      entry,
-      title: entryTitle(entry, game),
-      place: location?.name ?? 'Sin destino asociado',
-      date: new Date(entry.date),
-      url: photoFor(entry.id),
+      id: entry.id, title: entryTitle(entry, game),
+      place: locations.find(location => location.id === locationId)?.name ?? 'Sin destino asociado',
+      date: new Date(entry.date), by: game.names[entry.player], url: photoFor(entry.id),
     }];
-  }).sort((a, b) => sortBy === 'date'
-    ? b.date.getTime() - a.date.getTime()
-    : a.place.localeCompare(b.place, 'es') || b.date.getTime() - a.date.getTime());
+  });
+  const visitPhotos = locations.flatMap(place => {
+    const id = placeProofPhotoId(place.id);
+    if (!game.visited.includes(place.id) || !game.photos?.[id]) return [];
+    const visitedAt = game.visitDates?.[place.id];
+    return [{
+      id, title: `Visita: ${place.name}`, place: place.name,
+      date: visitedAt ? new Date(visitedAt) : null,
+      by: 'Parada compartida', url: photoFor(id),
+    }];
+  });
+  return [...entryPhotos, ...visitPhotos];
+}
+
+function Memories({ game, update, photoFor }: { game: Game; update: (fn: (g: Game) => Game, msg?: string) => void; photoFor: PhotoResolver }) {
+  const [sortBy, setSortBy] = useState<'date' | 'place'>('date');
+  const memories = collectMemories(game, photoFor).sort((a, b) => sortBy === 'date'
+    ? (b.date?.getTime() ?? 0) - (a.date?.getTime() ?? 0)
+    : a.place.localeCompare(b.place, 'es') || (b.date?.getTime() ?? 0) - (a.date?.getTime() ?? 0));
   const groups = new Map<string, typeof memories>();
   for (const memory of memories) {
-    const key = sortBy === 'date' ? memory.date.toLocaleDateString('es-ES', { dateStyle: 'long' }) : memory.place;
+    const key = sortBy === 'date' ? memory.date?.toLocaleDateString('es-ES', { dateStyle: 'long' }) ?? 'Sin fecha registrada' : memory.place;
     groups.set(key, [...(groups.get(key) ?? []), memory]);
   }
   return <div className="content-wrap memories-wrap">
-    <div className="page-heading"><Pill>VUESTRA HISTORIA EN IMÁGENES</Pill><h1>Recuerdos<br /><em>de Roma.</em></h1><p>Las fotos de los retos que habéis vivido juntos, guardadas en un solo lugar.</p></div>
+    <div className="page-heading"><Pill>VUESTRA HISTORIA EN IMÁGENES</Pill><h1>Recuerdos<br /><em>de Roma.</em></h1><p>Fotos de misiones y visitas. Añadid una frase propia a cada imagen para que también aparezca en vuestro resumen.</p></div>
     <div className="memories-toolbar"><span className="small-note">{memories.length} RECUERDOS</span><div className="segmented" aria-label="Ordenar recuerdos">{(['date', 'place'] as const).map(sort => <button key={sort} className={sortBy === sort ? 'chosen' : ''} onClick={() => setSortBy(sort)}>{sort === 'date' ? 'Por fecha' : 'Por lugar'}</button>)}</div></div>
     {!memories.length ? <div className="empty-state">Todavía no hay fotos en el álbum. Añadid una desde un reto completado o desde el historial.</div> :
-      [...groups.entries()].map(([heading, items]) => <section className="memory-group" key={heading}><SectionTitle title={heading} aside={<span className="small-note">{items.length} {items.length === 1 ? 'FOTO' : 'FOTOS'}</span>} /><div className="memory-grid">{items.map(memory => <article className="memory-card" key={memory.entry.id}><div className={`memory-image ${memory.url ? '' : 'loading'}`}>{memory.url && <img src={memory.url} alt={`Recuerdo: ${memory.title}`} loading="lazy" />}<button className={`memory-favorite ${game.favoritePhotos?.includes(memory.entry.id) ? 'active' : ''}`} aria-label={game.favoritePhotos?.includes(memory.entry.id) ? 'Quitar de fotos favoritas' : 'Marcar como foto favorita'} onClick={() => update(g => ({ ...g, favoritePhotos: g.favoritePhotos?.includes(memory.entry.id) ? g.favoritePhotos.filter(id => id !== memory.entry.id) : [...(g.favoritePhotos ?? []), memory.entry.id] }))}><Heart size={18} fill={game.favoritePhotos?.includes(memory.entry.id) ? 'currentColor' : 'none'} /></button></div><div className="memory-caption"><Pill>{memory.place}</Pill><h3>{memory.title}</h3><span>{memory.date.toLocaleDateString('es-ES', { day: 'numeric', month: 'long', year: 'numeric' })} · {game.names[memory.entry.player]}</span></div></article>)}</div></section>)
+      [...groups.entries()].map(([heading, items]) => <section className="memory-group" key={heading}><SectionTitle title={heading} aside={<span className="small-note">{items.length} {items.length === 1 ? 'FOTO' : 'FOTOS'}</span>} /><div className="memory-grid">{items.map(memory => <article className="memory-card" key={memory.id}><div className={`memory-image ${memory.url ? '' : 'loading'}`}>{memory.url && <img src={memory.url} alt={`Recuerdo: ${memory.title}`} loading="lazy" />}<button className={`memory-favorite ${game.favoritePhotos?.includes(memory.id) ? 'active' : ''}`} aria-label={game.favoritePhotos?.includes(memory.id) ? 'Quitar de fotos favoritas' : 'Marcar como foto favorita'} onClick={() => update(g => ({ ...g, favoritePhotos: g.favoritePhotos?.includes(memory.id) ? g.favoritePhotos.filter(id => id !== memory.id) : [...(g.favoritePhotos ?? []), memory.id] }))}><Heart size={18} fill={game.favoritePhotos?.includes(memory.id) ? 'currentColor' : 'none'} /></button></div><div className="memory-caption"><Pill>{memory.place}</Pill><h3>{memory.title}</h3><span>{memory.date?.toLocaleDateString('es-ES', { day: 'numeric', month: 'long', year: 'numeric' }) ?? 'Fecha sin registrar'} · {memory.by}</span>{game.photoCaptions?.[memory.id] && <p className="memory-user-caption">“{game.photoCaptions[memory.id]}”</p>}<PhotoCaptionEditor id={memory.id} game={game} update={update} /></div></article>)}</div></section>)
     }
   </div>;
 }
 
-function TripRecap({ game, photoFor, notify }: { game: Game; photoFor: PhotoResolver; notify: (message: string) => void }) {
+function TripRecap({ game, update, photoFor, notify }: { game: Game; update: (fn: (g: Game) => Game, msg?: string) => void; photoFor: PhotoResolver; notify: (message: string) => void }) {
   const visited = locations.filter(place => game.visited.includes(place.id));
   const completed = game.entries.filter(entry => ['mission', 'card', 'secret'].includes(entry.kind));
   const favorites = game.favoritePhotos ?? [];
-  const highlights = game.entries.filter(entry => game.photos?.[entry.id] && favorites.includes(entry.id)).slice(0, 4);
+  const gallery = collectMemories(game, photoFor).sort((a, b) =>
+    Number(favorites.includes(b.id)) - Number(favorites.includes(a.id)) || (b.date?.getTime() ?? 0) - (a.date?.getTime() ?? 0));
+  const expeditions = (game.expeditions ?? []).filter(expedition => expeditionStage(game, expedition) === 'done');
   const favoriteCards = cards.filter(card => game.favorites.includes(card.id));
-  const favoriteTitles = highlights.map(entry => entryTitle(entry, game)).join(', ');
-  const text = `Roma, nuestro juego secreto: ${game.names.join(' y ')} completamos ${completed.length} retos, visitamos ${visited.length} lugares y sumamos ${sharedScore(game)} puntos compartidos.${favoriteTitles ? ` Fotos favoritas: ${favoriteTitles}.` : ''}`;
+  const favoriteTitles = gallery.filter(memory => favorites.includes(memory.id)).map(memory => game.photoCaptions?.[memory.id] || memory.title).join(', ');
+  const stories = visited.flatMap(place => {
+    const story = game.placeStories?.[place.id];
+    return story?.completedAt && story.response ? [`${place.name}: ${story.response}`] : [];
+  });
+  const photoLines = gallery.flatMap(memory => game.photoCaptions?.[memory.id] ? [`${memory.title}: ${game.photoCaptions[memory.id]}`] : []);
+  const text = [
+    `Roma, nuestro juego secreto: ${game.names.join(' y ')} completamos ${completed.length} retos y ${expeditions.length} expediciones, visitamos ${visited.length} lugares y sumamos ${sharedScore(game)} puntos compartidos.${favoriteTitles ? ` Fotos favoritas: ${favoriteTitles}.` : ''}`,
+    ...(stories.length ? [`Historias de lugares:\n${stories.join('\n')}`] : []),
+    ...(photoLines.length ? [`Fotos y frases:\n${photoLines.join('\n')}`] : []),
+  ].join('\n\n');
   const share = async () => {
     try {
       if (navigator.share) await navigator.share({ title: 'Nuestro viaje a Roma', text });
@@ -579,31 +644,64 @@ function TripRecap({ game, photoFor, notify }: { game: Game; photoFor: PhotoReso
     } catch { /* Compartir se puede cancelar desde el menú del dispositivo. */ }
   };
   return <div className="content-wrap recap-page">
-    <div className="page-heading"><Pill>ROMA · VUESTRO CAPÍTULO</Pill><h1>Lo que vivimos<br /><em>juntos.</em></h1><p>Un pequeño resumen de las paradas, retos y recuerdos de vuestro viaje.</p></div>
+    <div className="page-heading"><Pill>ROMA · VUESTRO CAPÍTULO</Pill><h1>Lo que vivimos<br /><em>juntos.</em></h1><p>Paradas, retos y fotos. Escribid aquí una frase para cada imagen antes de compartir o imprimir el resumen.</p></div>
     <div className="recap-stats"><div><strong>{visited.length}</strong><span>LUGARES</span></div><div><strong>{completed.length}</strong><span>RETOS</span></div><div><strong>{sharedScore(game)}</strong><span>PUNTOS COMPARTIDOS</span></div></div>
-    <section className="recap-section"><SectionTitle title="Paradas romanas" /><div className="recap-places">{visited.length ? visited.map((place, i) => <span key={place.id}><b>{String(i + 1).padStart(2, '0')}</b>{place.name}</span>) : <p>Aún no hay destinos marcados como visitados.</p>}</div></section>
+    {expeditions.length > 0 && <section className="recap-section"><SectionTitle title="Postales de expedición" /><p className="muted-copy">Tres pruebas, la decisión que tomasteis y las fotos que las acompañan.</p><div className="expedition-postcard-list">{expeditions.map(expedition => <ExpeditionPostcard key={expedition.id} game={game} expedition={expedition} photoFor={photoFor} />)}</div></section>}
+    <section className="recap-section"><SectionTitle title="Paradas romanas" /><div className="recap-places">{visited.length ? visited.map((place, i) => {
+      const story = game.placeStories?.[place.id];
+      const choice = story && storyForPlace(place.id, place.name).choices[story.choice];
+      return <span key={place.id}><b>{String(i + 1).padStart(2, '0')}</b><span>{place.name}{choice && <small className="recap-place-story">{story?.completedAt ? `${choice.title}: ${story.response}` : `Reto pendiente: ${choice.title}`}</small>}{game.photoCaptions?.[placeProofPhotoId(place.id)] && <small className="recap-place-caption">“{game.photoCaptions[placeProofPhotoId(place.id)]}”</small>}</span></span>;
+    }) : <p>Aún no hay destinos marcados como visitados.</p>}</div></section>
     <section className="recap-section"><SectionTitle title="Retos que completamos" /><div className="recap-challenges">{completed.slice(0, 8).map(entry => <span key={entry.id}>{entryTitle(entry, game)}</span>)}{!completed.length && <p>Vuestro primer reto todavía os espera.</p>}</div></section>
     {favoriteCards.length > 0 && <section className="recap-section"><SectionTitle title="Cartas favoritas" /><div className="recap-challenges">{favoriteCards.slice(0, 6).map(card => <span key={card.id}>{card.title}</span>)}</div></section>}
-    {highlights.length > 0 && <section className="recap-section"><SectionTitle title="Fotos favoritas" /><div className="memory-grid">{highlights.map(entry => <figure className="memory-card" key={entry.id}><div className="memory-image">{photoFor(entry.id) && <img src={photoFor(entry.id)} alt={entryTitle(entry, game)} />}</div><figcaption className="memory-caption"><h3>{entryTitle(entry, game)}</h3></figcaption></figure>)}</div></section>}
-    {!highlights.length && <p className="muted-copy">Elegid fotos favoritas desde la galería para incluirlas en el resumen imprimible.</p>}
+    <section className="recap-section"><SectionTitle title="Fotos y frases" aside={<span className="small-note">{gallery.length} FOTOS</span>} />
+      <p className="muted-copy">Todas las fotos de misiones y visitas. Las favoritas aparecen primero; las frases se guardan para los dos.</p>
+      {gallery.length ? <div className="memory-grid recap-gallery">{gallery.map(memory => <figure className="memory-card" key={memory.id}><div className="memory-image">{memory.url && <img src={memory.url} alt={memory.title} loading="lazy" />}</div><figcaption className="memory-caption"><span className="eyebrow">{favorites.includes(memory.id) ? 'FAVORITA · ' : ''}{memory.place}</span><h3>{memory.title}</h3>{game.photoCaptions?.[memory.id] && <p className="memory-user-caption">“{game.photoCaptions[memory.id]}”</p>}<PhotoCaptionEditor id={memory.id} game={game} update={update} /></figcaption></figure>)}</div>
+        : <p className="muted-copy">Las fotos que añadáis a misiones o visitas aparecerán aquí para escribirles una frase.</p>}
+    </section>
     <div className="recap-actions"><button className="button button-dark" onClick={share}>Compartir resumen <ArrowUpRight size={17} /></button><button className="button button-outline" onClick={() => window.print()}>Imprimir / Guardar PDF <Download size={17} /></button></div>
   </div>;
 }
 
-function Missions({ game, update, notify, onPhoto }: { game: Game; update: (fn: (g: Game) => Game, msg?: string) => void; notify: (msg: string) => void; onPhoto: PhotoHandler }) {
+function Missions({ game, update, notify, onPhoto, photoFor }: { game: Game; update: (fn: (g: Game) => Game, msg?: string) => void; notify: (msg: string) => void; onPhoto: PhotoHandler; photoFor: PhotoResolver }) {
   const params = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '');
   const initial = params.get('mission');
   const locationFilter = params.get('location');
   const locationName = locations.find(location => location.id === locationFilter)?.name;
   const [filter, setFilter] = useState<Category | 'All'>('All');
-  const [selected, setSelected] = useState<Mission | null>(missions.find(m => m.id === initial) ?? null);
+  const [selected, setSelected] = useState<Mission | null>(() =>
+    missions.find(mission => mission.id === initial) ?? missions.find(mission => mission.id === game.activeMissionId) ?? null);
+  const initialMissionSync = useRef(false);
   const [player, setPlayer] = useState<Player>(0);
   const [consent, setConsent] = useState(false);
   const [savingPhoto, setSavingPhoto] = useState(false);
   const [sort, setSort] = useState('all');
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
-  const openMission = (m: Mission | null) => { setSelected(m); setConsent(false); setPhotoFile(null); setPhotoPreview(prev => { if (prev) URL.revokeObjectURL(prev); return null; }); };
+  const submissions = game.photoSubmissions ?? [];
+  const pendingSubmissions = submissions.filter(submission => submission.status === 'pending');
+  useEffect(() => {
+    if (!initialMissionSync.current) {
+      initialMissionSync.current = true;
+      if (initial && initial !== game.activeMissionId && missions.some(mission => mission.id === initial)) {
+        update(g => g.activeMissionId === initial ? g : { ...g, activeMissionId: initial });
+        return;
+      }
+    }
+    const sharedMission = missions.find(mission => mission.id === game.activeMissionId) ?? null;
+    if (sharedMission?.id === selected?.id) return;
+    setSelected(sharedMission);
+    setConsent(false);
+    setPhotoFile(null);
+    setPhotoPreview(prev => { if (prev) URL.revokeObjectURL(prev); return null; });
+  }, [game.activeMissionId]);
+  const openMission = (m: Mission | null) => {
+    setSelected(m);
+    setConsent(false);
+    setPhotoFile(null);
+    setPhotoPreview(prev => { if (prev) URL.revokeObjectURL(prev); return null; });
+    update(g => g.activeMissionId === m?.id ? g : { ...g, activeMissionId: m?.id });
+  };
   const pickPhoto = (f: File | undefined) => { if (!f) return; setPhotoFile(f); setPhotoPreview(prev => { if (prev) URL.revokeObjectURL(prev); return URL.createObjectURL(f); }); };
   const completeMission = async () => {
     if (!selected) return;
@@ -615,25 +713,40 @@ function Missions({ game, update, notify, onPhoto }: { game: Game; update: (fn: 
       setSavingPhoto(false);
       if (!uploaded) return;
     }
+    if (item.requiresPeerValidation) {
+      update(g => submitPhotoMission(g, item, player, entryId), `Foto enviada a ${game.names[player === 0 ? 1 : 0]} para validar. Todavía no suma puntos.`);
+      openMission(null);
+      return;
+    }
     update(g => award(g, item, 'mission', player, entryId), `¡Misión completada! +${item.points}${game.doubleNext ? ' × 2' : ''} puntos`);
     openMission(null);
   };
-  const visible = missions.filter(m => (!locationFilter || m.location === locationFilter) && (filter === 'All' || m.category === filter) && allowed(game, m.intensity) && (sort !== 'available' || !game.entries.some(e => e.kind === 'mission' && e.itemId === m.id)) && (sort !== 'completed' || game.entries.some(e => e.kind === 'mission' && e.itemId === m.id)));
+  const hasPendingSubmission = (missionId: string) => submissions.some(submission => submission.missionId === missionId && submission.status === 'pending');
+  const visible = missions.filter(m => (!locationFilter || m.location === locationFilter) && (filter === 'All' || m.category === filter) && allowed(game, m.intensity) && (sort !== 'available' || (!game.entries.some(e => e.kind === 'mission' && e.itemId === m.id) && !hasPendingSubmission(m.id))) && (sort !== 'completed' || game.entries.some(e => e.kind === 'mission' && e.itemId === m.id)));
   const completed = game.entries.some(e => e.kind === 'mission' && e.itemId === selected?.id);
+  const selectedSubmission = submissions.find(submission => submission.missionId === selected?.id && submission.status === 'pending');
   const locked = !!selected?.location && !game.visited.includes(selected.location);
   return <div className="content-wrap"><div className="page-heading"><h1>{locationName ? <>Retos en <br /><em>{locationName}.</em></> : <>Elegid vuestra<br /><em>próxima historia.</em></>}</h1><p>{locationName ? 'Estos retos se desbloquean al visitar el lugar. Elegid uno para jugar.' : 'Algunas planeadas, otras inesperadas. Todas a vuestra manera.'}</p></div>
+    {pendingSubmissions.length > 0 && <section className="photo-review-section"><div className="section-heading"><div><span className="eyebrow">PRUEBAS FOTOGRÁFICAS</span><h2>Fotos por validar</h2></div><span className="small-note">{pendingSubmissions.length} PENDIENTES</span></div><p>Quien no hizo la foto decide si cumple el reto. Aprobarla añade sus puntos; rechazarla no penaliza y permite intentarlo de nuevo.</p><div className="photo-review-grid">{pendingSubmissions.map(submission => {
+      const mission = missions.find(item => item.id === submission.missionId);
+      const reviewer = (submission.player === 0 ? 1 : 0) as Player;
+      if (!mission) return null;
+      return <article className="photo-review-card" key={submission.id}><div className="photo-review-image">{photoFor(submission.id) && <img src={photoFor(submission.id)} alt={`Foto enviada para ${mission.title}`} />}</div><div className="photo-review-copy"><span className="eyebrow">HECHA POR {game.names[submission.player].toUpperCase()}</span><h3>{mission.title}</h3><p>{mission.description}</p><small>Validación de {game.names[reviewer]}</small><div className="photo-review-actions"><button className="button button-dark" onClick={() => update(g => reviewPhotoSubmission(g, submission.id, reviewer, true), `Foto aprobada. ${game.names[submission.player]} recibe los puntos.`)}>Aprobar · +{mission.points}</button><button className="button button-outline" onClick={() => update(g => reviewPhotoSubmission(g, submission.id, reviewer, false), 'Foto rechazada sin penalización; se puede repetir el reto.')}>Rechazar</button></div></div></article>;
+    })}</div></section>}
     <div className="list-toolbar"><div className="filter-scroll">{(['All', ...categories] as const).map(c => <button key={c} className={filter === c ? 'selected' : ''} onClick={() => setFilter(c)}>{c === 'All' ? 'Todas' : categoryLabel[c]}</button>)}</div><select aria-label="Filtrar por estado" value={sort} onChange={e => setSort(e.target.value)}><option value="all">Todas las misiones</option><option value="available">Sin completar</option><option value="completed">Completadas</option></select></div>
-    <div className="mission-grid">{visible.map((m, i) => { const done = game.entries.some(e => e.kind === 'mission' && e.itemId === m.id); const unavailable = m.location && !game.visited.includes(m.location); return <button className={`mission-card ${done ? 'done' : ''}`} key={m.id} onClick={() => openMission(m)}><div className="mission-top"><span>{String(i + 1).padStart(2, '0')} / {categoryLabel[m.category].toUpperCase()}</span><span>{done ? '✓ HECHA' : unavailable ? '⌖ BLOQUEADA' : `${m.points} PTS`}</span></div><div className="mission-card-content"><span className="mission-glyph">{['✦', '✳', '♡', '◇', '☾'][categories.indexOf(m.category)]}</span><h3>{m.title}</h3><p>{m.description}</p></div><div className="mission-bottom"><span>{difficultyLabel[m.difficulty]} · {m.duration} MIN {m.mode === 'solo' ? '· INDIVIDUAL' : '· JUNTOS'}</span><ArrowUpRight size={19} /></div></button>; })}</div>
+    <div className="mission-grid">{visible.map((m, i) => { const done = game.entries.some(e => e.kind === 'mission' && e.itemId === m.id); const pending = hasPendingSubmission(m.id); const rejected = submissions.some(submission => submission.missionId === m.id && submission.status === 'rejected'); const unavailable = m.location && !game.visited.includes(m.location); return <button className={`mission-card ${done ? 'done' : ''}`} key={m.id} onClick={() => openMission(m)}><div className="mission-top"><span>{String(i + 1).padStart(2, '0')} / {categoryLabel[m.category].toUpperCase()}</span><span>{done ? '✓ HECHA' : pending ? '◷ EN VALIDACIÓN' : rejected ? '↻ REPETIR FOTO' : unavailable ? '⌖ BLOQUEADA' : `${m.points} PTS`}</span></div><div className="mission-card-content"><span className="mission-glyph">{['✦', '✳', '♡', '◇', '☾'][categories.indexOf(m.category)]}</span><h3>{m.title}</h3><p>{m.description}</p></div><div className="mission-bottom"><span>{m.requiresPeerValidation ? 'FOTO · VALIDACIÓN' : `${difficultyLabel[m.difficulty]} · ${m.duration} MIN`} {m.mode === 'solo' ? '· INDIVIDUAL' : '· JUNTOS'}</span><ArrowUpRight size={19} /></div></button>; })}</div>
     {visible.length === 0 && <div className="empty-state">Por aquí no hay nada todavía. Prueba otro filtro o visita un lugar nuevo en el mapa.</div>}
     {selected && <div className="modal-backdrop" onMouseDown={e => { if (e.target === e.currentTarget) openMission(null); }}><div className="detail-modal"><button className="modal-close" onClick={() => openMission(null)} aria-label="Cerrar"><X size={20} /></button><Pill>{categoryLabel[selected.category].toUpperCase()} · {difficultyLabel[selected.difficulty].toUpperCase()}</Pill><span className="detail-glyph">✦</span><h2>{selected.title}</h2><p className="detail-description">{selected.description}</p><div className="detail-facts"><span>◷ &nbsp; {selected.duration} MINUTOS</span><span>✦ &nbsp; +{selected.points} PUNTOS</span><span>{selected.mode === 'solo' ? 'UN JUGADOR' : 'JUGAD JUNTOS'}</span></div>
       {selected.location && <p className="location-hint"><MapPin size={16} /> {locations.find(l => l.id === selected.location)?.name} {locked && '· Visita este lugar o márcalo en el mapa para desbloquearlo.'}</p>}
+      {selected.requiresPeerValidation && <p className="photo-validation-note"><ShieldCheck size={16} /> Subid la foto y la otra persona tendrá que aprobarla. Los puntos solo se conceden al validarla.</p>}
       {selected.requiresConsent && <label className="consent-check"><input type="checkbox" checked={consent} onChange={e => setConsent(e.target.checked)} /> Ambos estáis de acuerdo con esta interacción opcional ahora mismo. Podéis retirar vuestro consentimiento en cualquier momento.</label>}
-      {!completed && !locked && <div className="complete-actions"><span>¿QUIÉN REGISTRA EL RETO?</span><div className="player-switch">{game.names.map((n, i) => <button key={i} className={player === i ? 'chosen' : ''} onClick={() => setPlayer(i as Player)}>{n}</button>)}</div>
+      {selectedSubmission && <p className="photo-validation-note">Foto enviada por {game.names[selectedSubmission.player]}. Esperando la validación de {game.names[selectedSubmission.player === 0 ? 1 : 0]}.</p>}
+      {!completed && !selectedSubmission && !locked && <div className="complete-actions"><span>¿QUIÉN REGISTRA EL RETO?</span><div className="player-switch">{game.names.map((n, i) => <button key={i} className={player === i ? 'chosen' : ''} onClick={() => setPlayer(i as Player)}>{n}</button>)}</div>
         {selected.requiresPhoto && <div className="photo-require"><span className="photo-require-label"><Camera size={15} /> ESTE RETO PIDE FOTO</span>{photoPreview && <img className="photo-preview" src={photoPreview} alt="Vista previa del recuerdo" />}<label className="button button-outline photo-pick"><input type="file" accept="image/*" hidden onChange={e => pickPhoto(e.target.files?.[0])} />{photoPreview ? 'Cambiar foto' : 'Subir la foto del reto'} <Upload size={16} /></label></div>}
-        <button className="button button-dark wide" disabled={savingPhoto || (selected.requiresConsent && !consent) || (selected.requiresPhoto && !photoFile)} onClick={completeMission}>{savingPhoto ? 'Subiendo foto…' : 'Marcar como completada'} {!savingPhoto && <Check size={18} />}</button></div>}
+        <button className="button button-dark wide" disabled={savingPhoto || (selected.requiresConsent && !consent) || (selected.requiresPhoto && !photoFile)} onClick={completeMission}>{savingPhoto ? 'Subiendo foto…' : selected.requiresPeerValidation ? 'Enviar para validar' : 'Marcar como completada'} {!savingPhoto && <Check size={18} />}</button></div>}
       {completed && <div className="complete-label"><Check size={18} /> Misión completada</div>}
       {locked && <a className="button button-dark wide" href="/map">Desbloquear en el mapa <ArrowUpRight size={18} /></a>}
-      <button className="quiet-button" onClick={() => { setSelected(null); notify('Reto omitido. Nunca se pierden puntos por pasar.'); }}>Ahora no · pasar sin penalización</button>
+      <button className="quiet-button" onClick={() => { openMission(null); notify('Reto omitido. Nunca se pierden puntos por pasar.'); }}>Ahora no · pasar sin penalización</button>
     </div></div>}
   </div>;
 }
@@ -644,13 +757,36 @@ function Cards({ game, update, notify }: { game: Game; update: (fn: (g: Game) =>
     'Flirt Mode': 'Coqueteo con humor, complicidad y propuestas fáciles de adaptar.',
     Temptation: 'Cartas sensuales y muy atrevidas para jugar en privado. Siempre podéis adaptar la propuesta o pasar.',
   };
-  const pendingCard = cards.find(c => c.id === game.draws.find(d => d.status === 'drawn')?.cardId);
+  const pendingDraw = game.draws.find(draw => draw.status === 'drawn');
+  const pendingCard = cards.find(c => c.id === pendingDraw?.cardId);
   const [deck, setDeck] = useState<Deck>(pendingCard?.deck ?? 'Roman Chaos');
   const visiblePendingCard = pendingCard && (pendingCard.intensity !== 'daring' || game.adultConfirmed) ? pendingCard : null;
   const [drawn, setDrawn] = useState<Card | null>(visiblePendingCard ?? null);
   const [flipped, setFlipped] = useState(!!visiblePendingCard);
+  const [syncedDrawDate, setSyncedDrawDate] = useState(pendingDraw?.date);
   const [player, setPlayer] = useState<Player>(0);
   const [consent, setConsent] = useState(false);
+  useEffect(() => {
+    if (!pendingDraw || !visiblePendingCard) {
+      if (syncedDrawDate !== undefined) {
+        setSyncedDrawDate(undefined);
+        if (drawn && game.entries.some(entry => entry.kind === 'card' && entry.itemId === drawn.id)) {
+          setFlipped(true);
+          return;
+        }
+        setDrawn(null);
+        setFlipped(false);
+        setConsent(false);
+      }
+      return;
+    }
+    if (pendingDraw.date === syncedDrawDate) return;
+    setSyncedDrawDate(pendingDraw.date);
+    setDeck(visiblePendingCard.deck);
+    setDrawn(visiblePendingCard);
+    setFlipped(true);
+    setConsent(false);
+  }, [pendingDraw?.date, pendingDraw?.cardId, game.adultConfirmed, syncedDrawDate, drawn?.id, game.entries]);
   function draw() {
     if (drawn) update(g => ({ ...g, draws: g.draws.map((d, i) => i === 0 && d.status === 'drawn' ? { ...d, status: 'skipped' } : d) }));
     const pool = eligibleCards(game, deck);
@@ -667,7 +803,9 @@ function Cards({ game, update, notify }: { game: Game; update: (fn: (g: Game) =>
       return notify('No quedan cartas nuevas de este mazo. Cambiad la intensidad en Ajustes o elegid otro.');
     }
     setFlipped(false); setDrawn(pick); setConsent(false);
-    update(g => ({ ...g, draws: [{ cardId: pick.id, date: new Date().toISOString(), status: 'drawn' }, ...g.draws] }));
+    const drawnAt = new Date().toISOString();
+    setSyncedDrawDate(drawnAt);
+    update(g => ({ ...g, draws: [{ cardId: pick.id, date: drawnAt, status: 'drawn' }, ...g.draws] }));
     setTimeout(() => setFlipped(true), 180);
   }
   const completed = !!drawn && game.entries.some(e => e.kind === 'card' && e.itemId === drawn.id);
@@ -687,7 +825,7 @@ function Cards({ game, update, notify }: { game: Game; update: (fn: (g: Game) =>
   </div>;
 }
 
-function MapPage({ game, update }: { game: Game; update: (fn: (g: Game) => Game, msg?: string) => void }) {
+function MapPage({ game, update, onPhoto, photoFor }: { game: Game; update: (fn: (g: Game) => Game, msg?: string) => void; onPhoto: PhotoHandler; photoFor: PhotoResolver }) {
   const initialPlace = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '').get('place');
   const [selected, setSelected] = useState<string>(locations.some(location => location.id === initialPlace) ? initialPlace! : 'colosseum');
   const [destinationsOpen, setDestinationsOpen] = useState(false);
@@ -698,11 +836,33 @@ function MapPage({ game, update }: { game: Game; update: (fn: (g: Game) => Game,
   const [locationMessage, setLocationMessage] = useState('');
   const [notificationPermission, setNotificationPermission] = useState<NotificationPermission | 'unsupported'>(() => typeof Notification === 'undefined' ? 'unsupported' : Notification.permission);
   const [notificationMessage, setNotificationMessage] = useState('');
+  const [visitPhoto, setVisitPhoto] = useState<{ placeId: string; file: File; preview: string } | null>(null);
+  const [savingVisitPhoto, setSavingVisitPhoto] = useState(false);
   const locationWatch = useRef<number | null>(null);
   const lastArrival = useRef<string | null>(null);
   const route = game.route ?? [];
   const place = locations.find(l => l.id === selected) ?? locations[0]!;
   const placeMissions = missions.filter(m => m.location === place.id);
+  const placeProof = visitPhoto?.placeId === place.id ? visitPhoto : null;
+  const storedVisitPhoto = photoFor(placeProofPhotoId(place.id));
+  useEffect(() => () => {
+    if (visitPhoto) URL.revokeObjectURL(visitPhoto.preview);
+  }, [visitPhoto]);
+  const selectPlace = (id: string) => setSelected(id);
+  const chooseVisitPhoto = (file?: File) => {
+    if (!file) return;
+    setVisitPhoto({ placeId: place.id, file, preview: URL.createObjectURL(file) });
+  };
+  const confirmVisit = async (locationId: string) => {
+    if (visitPhoto?.placeId !== locationId || savingVisitPhoto) return;
+    const photoId = placeProofPhotoId(locationId);
+    setSavingVisitPhoto(true);
+    const uploaded = await onPhoto(photoId, visitPhoto.file);
+    setSavingVisitPhoto(false);
+    if (!uploaded) return;
+    update(g => confirmPlaceVisit(g, locationId), `Foto guardada. ${locations.find(location => location.id === locationId)?.name} queda marcado como visitado y sus misiones están desbloqueadas.`);
+    setVisitPhoto(null);
+  };
   const visiblePlaces = locations.filter(location => {
     const matchesSearch = `${location.name} ${location.area} ${location.description}`.toLowerCase().includes(search.trim().toLowerCase());
     const isVisited = game.visited.includes(location.id);
@@ -829,8 +989,8 @@ function MapPage({ game, update }: { game: Game; update: (fn: (g: Game) => Game,
         const nearby = locations.find(item => item.id === nearbyPlace.id)!;
         const visited = game.visited.includes(nearby.id);
         const distanceLabel = nearbyPlace.distance < 10 ? 'A MENOS DE 10 METROS' : `A UNOS ${Math.round(nearbyPlace.distance / 10) * 10} METROS`;
-        return <div className="nearby-arrival" role="status"><div><span className="eyebrow">{distanceLabel}</span><h3>Habéis llegado a {nearby.name}.</h3><p>Confirmad la parada para desbloquear las misiones vinculadas.</p></div>
-          {!visited ? <button className="button button-dark" onClick={() => update(g => ({ ...g, visited: [...new Set([...g.visited, nearby.id])] }), `Llegada a ${nearby.name} confirmada. Sus misiones están desbloqueadas.`)}>Confirmar llegada <MapPin size={16} /></button>
+        return <div className="nearby-arrival" role="status"><div><span className="eyebrow">{distanceLabel}</span><h3>Habéis llegado a {nearby.name}.</h3><p>{visited ? 'La parada ya está confirmada.' : 'Subid una foto del lugar desde su ficha para confirmar la visita y desbloquear sus misiones.'}</p></div>
+          {!visited ? <button className="button button-dark" onClick={() => { setSearch(''); setVisitFilter('all'); setSelected(nearby.id); document.querySelector('.map-layout')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}>Añadir foto <Camera size={16} /></button>
             : <a className="button button-dark" href={`/missions?location=${encodeURIComponent(nearby.id)}`}>Ver sus misiones <ArrowUpRight size={16} /></a>}
           <button className="quiet-button" onClick={() => setNearbyPlace(null)}>Ahora no</button>
         </div>;
@@ -842,7 +1002,18 @@ function MapPage({ game, update }: { game: Game; update: (fn: (g: Game) => Game,
         {(['all', 'pending', 'visited'] as const).map(filter => <button key={filter} className={visitFilter === filter ? 'selected' : ''} onClick={() => setVisitFilter(filter)}>{filter === 'all' ? 'Todos' : filter === 'pending' ? 'Pendientes' : 'Visitados'}</button>)}
       </div>
     </div>
-    <div className="map-layout"><div className="map-holder"><RomeMap onSelect={setSelected} visited={game.visited} places={visiblePlaces} /></div><aside className="location-panel">{visiblePlaces.length ? <><div className="location-photo" style={{ backgroundImage: `url(${photo(place.image, 850)})` }}><span>{place.area.toUpperCase()} · ROMA</span></div><div className="location-info"><Pill>DESTINO {String(locations.indexOf(place) + 1).padStart(2, '0')} / {String(locations.length).padStart(2, '0')}</Pill><h2>{place.name}</h2><p>{place.description}</p><div className="location-meta"><span>DIFICULTAD {difficultyLabel[place.difficulty].toUpperCase()}</span><span>{placeMissions.length} MISIONES</span></div><button className={`button wide ${game.visited.includes(place.id) ? 'button-outline' : 'button-dark'}`} onClick={() => update(g => ({ ...g, visited: g.visited.includes(place.id) ? g.visited.filter(id => id !== place.id) : [...g.visited, place.id] }), game.visited.includes(place.id) ? 'Visita eliminada' : 'Destino desbloqueado')}>{game.visited.includes(place.id) ? 'Visitado ✓ · Deshacer' : 'Marcar como visitado'} <MapPin size={17} /></button><button className="button button-outline wide route-toggle" onClick={() => addToRoute(place.id)}>{route.includes(place.id) ? 'Quitar de mi ruta' : 'Añadir a mi ruta'} <Compass size={17} /></button><p className="map-footnote">GPS opcional. La ubicación no se guarda; solo el destino confirmado.</p></div></> : <div className="empty-state">No hay destinos con esos filtros. Cambia la búsqueda o muestra todos.</div>}</aside></div>
+    <div className="map-layout"><div className="map-holder"><RomeMap onSelect={selectPlace} visited={game.visited} places={visiblePlaces} /></div><aside className="location-panel">{visiblePlaces.length ? <><div className="location-photo" style={{ backgroundImage: `url(${photo(place.image, 850)})` }}><span>{place.area.toUpperCase()} · ROMA</span></div><div className="location-info"><Pill>DESTINO {String(locations.indexOf(place) + 1).padStart(2, '0')} / {String(locations.length).padStart(2, '0')}</Pill><h2>{place.name}</h2><p>{place.description}</p><div className="location-meta"><span>DIFICULTAD {difficultyLabel[place.difficulty].toUpperCase()}</span><span>{placeMissions.length} MISIONES</span></div>
+      {game.visited.includes(place.id) ? <><div className="visit-proof-status"><Check size={16} /> {storedVisitPhoto ? 'VISITADO · FOTO GUARDADA' : 'VISITADO'}</div>{storedVisitPhoto && <img className="visit-proof-image" src={storedVisitPhoto} alt={`Foto de ${place.name}`} />}<button className="quiet-button" onClick={() => update(g => ({ ...g, visited: g.visited.filter(id => id !== place.id) }), 'Visita deshecha. Para marcarla otra vez, subid una foto nueva.')}>Deshacer visita</button></> : <div className="visit-proof-upload"><span className="photo-require-label"><Camera size={15} /> FOTO DEL LUGAR · OBLIGATORIA</span><p>Subid una foto propia donde se reconozca este destino. Solo entonces se desbloquean sus misiones.</p>{placeProof && <img className="photo-preview" src={placeProof.preview} alt={`Vista previa de ${place.name}`} />}<label className="button button-outline photo-pick"><input type="file" accept="image/*" capture="environment" hidden onChange={event => chooseVisitPhoto(event.target.files?.[0])} />{placeProof ? 'Cambiar foto' : 'Hacer o elegir foto'} <Upload size={16} /></label><button className="button button-dark wide" disabled={!placeProof || savingVisitPhoto} onClick={() => confirmVisit(place.id)}>{savingVisitPhoto ? 'Subiendo foto…' : 'Guardar foto y marcar visita'} <MapPin size={17} /></button></div>}
+      {game.visited.includes(place.id) && <>
+        <PlaceStoryChallenge game={game} place={place} update={update} />
+        {placeMissions.length > 0 && <section className="place-unlocked-missions"><span className="eyebrow">MISIONES QUE ABRE ESTA VISITA</span>
+          {placeMissions.filter(mission => allowed(game, mission.intensity)).map(mission => <a key={mission.id} href={`/missions?mission=${mission.id}`}>
+            <strong>{mission.title}</strong><small>{game.entries.some(entry => entry.kind === 'mission' && entry.itemId === mission.id) ? 'COMPLETADA' : `+${mission.points} PTS · ${mission.duration} MIN`}</small><ArrowUpRight size={15} /></a>)}
+          {!placeMissions.some(mission => allowed(game, mission.intensity)) && <p>Hay más misiones para este lugar al cambiar la intensidad en Ajustes.</p>}
+        </section>}
+      </>}
+      {game.photos?.[placeProofPhotoId(place.id)] && <PhotoCaptionEditor id={placeProofPhotoId(place.id)} game={game} update={update} />}
+      <button className="button button-outline wide route-toggle" onClick={() => addToRoute(place.id)}>{route.includes(place.id) ? 'Quitar de mi ruta' : 'Añadir a mi ruta'} <Compass size={17} /></button><p className="map-footnote">GPS opcional. La visita solo se confirma al subir una foto del destino.</p></div></> : <div className="empty-state">No hay destinos con esos filtros. Cambia la búsqueda o muestra todos.</div>}</aside></div>
     <section className="route-planner"><div className="section-heading"><div><span className="eyebrow">VUESTRO PASEO, A VUESTRO RITMO</span><h2>Ruta para hoy</h2></div><span className="small-note">{route.length} PARADAS</span></div>
       {!mapsRoute.length ? <p className="muted-copy">Añadid destinos desde el mapa para preparar un recorrido.</p> : <ol className="route-stops">{mapsRoute.map((stop, index) => <li key={stop!.id}><span className="route-number">{String(index + 1).padStart(2, '0')}</span><div><strong>{stop!.name}</strong><small>{missions.filter(mission => mission.location === stop!.id).length} misiones sugeridas</small><label className="route-moment"><span className="sr-only">Momento para {stop!.name}</span><select value={game.routeMoments?.[stop!.id] ?? (index < 2 ? 'morning' : index < 4 ? 'afternoon' : 'evening')} onChange={event => update(g => ({ ...g, routeMoments: { ...(g.routeMoments ?? {}), [stop!.id]: event.target.value as TripMoment } }))}>{Object.entries(momentLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label></div><div className="route-actions">{index > 0 && <button aria-label={`Mover ${stop!.name} arriba`} onClick={() => update(g => { const next = [...(g.route ?? [])]; [next[index - 1], next[index]] = [next[index]!, next[index - 1]!]; return { ...g, route: next }; })}>↑</button>}{index < mapsRoute.length - 1 && <button aria-label={`Mover ${stop!.name} abajo`} onClick={() => update(g => { const next = [...(g.route ?? [])]; [next[index + 1], next[index]] = [next[index]!, next[index + 1]!]; return { ...g, route: next }; })}>↓</button>}<button aria-label={`Quitar ${stop!.name}`} onClick={() => addToRoute(stop!.id)}><X size={16} /></button></div><details className="route-missions"><summary>Ver misiones</summary>{missions.filter(mission => mission.location === stop!.id).map(mission => game.visited.includes(stop!.id) ? <a key={mission.id} href={`/missions?mission=${mission.id}`}>{mission.title} <ArrowUpRight size={13} /></a> : <span key={mission.id}>{mission.title} · visita la parada para desbloquearla</span>)}{!missions.some(mission => mission.location === stop!.id) && <small>Aún no hay misiones para esta parada.</small>}</details></li>)}</ol>}
       {mapsRoute.length > 1 && <div className="route-breaks"><span>PAUSAS SUGERIDAS</span><p><strong>Entre mañana y tarde:</strong> reservad un café o un almuerzo tranquilo cerca de la siguiente parada.</p><p><strong>Antes del paseo nocturno:</strong> dejad un rato libre para descansar y tomar agua.</p></div>}
@@ -855,7 +1026,7 @@ function MapPage({ game, update }: { game: Game; update: (fn: (g: Game) => Game,
         <span><span className="eyebrow">ESCOGED LA PRÓXIMA PARADA</span><strong>Los destinos</strong></span>
         <span className="destinations-toggle-meta"><span className="small-note">{game.visited.length} / {locations.length} DESCUBIERTOS</span><ChevronRight size={20} /></span>
       </button>
-      {destinationsOpen && <div className="places-grid" id="destinations-list">{visiblePlaces.map(loc => <button key={loc.id} className={selected === loc.id ? 'place-row active' : 'place-row'} onClick={() => { setSelected(loc.id); document.querySelector('.map-layout')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}><span>{String(locations.indexOf(loc) + 1).padStart(2, '0')}</span><strong>{loc.name}</strong><small>{game.visited.includes(loc.id) ? '✓ VISITADO' : loc.area.toUpperCase()}</small><ChevronRight size={17} /></button>)}</div>}
+      {destinationsOpen && <div className="places-grid" id="destinations-list">{visiblePlaces.map(loc => <button key={loc.id} className={selected === loc.id ? 'place-row active' : 'place-row'} onClick={() => { selectPlace(loc.id); document.querySelector('.map-layout')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}><span>{String(locations.indexOf(loc) + 1).padStart(2, '0')}</span><strong>{loc.name}</strong><small>{game.visited.includes(loc.id) ? '✓ VISITADO' : loc.area.toUpperCase()}</small><ChevronRight size={17} /></button>)}</div>}
     </section>
   </div>;
 }
@@ -938,6 +1109,7 @@ function MysteryPage({ game, update }: { game: Game; update: (fn: (g: Game) => G
   const kindCount = (kind: string) => foundLeads.filter(lead => lead.kind === kind).length;
   return <div className="content-wrap mode-page mystery-page">
     <div className="page-heading"><Pill>CASO REAL · INVESTIGACIÓN HISTÓRICA</Pill><h1>Las hadas<br /><em>de Cottingley.</em></h1><p>{mysteryCase.intro}</p><span className="case-period">{mysteryCase.period} · ENGAÑO FOTOGRÁFICO, NO DELITO</span></div>
+    <ModeRules mode="mystery" initiallyOpen={state.cluesFound.length === 0 && state.attempts === 0 && !state.solved} />
     <section className="case-brief"><Pill>EXPEDIENTE ABIERTO</Pill><p>Vuestra tarea: separar testimonios, prestigio y evidencia material. Cada pista está clasificada; dadle más peso a los análisis que a las declaraciones. Revelad los documentos por turnos y elegid una hipótesis antes de abrir la resolución.</p></section>
     <section className="case-section"><SectionTitle title="Cronología" /><div className="case-timeline">{mysteryCase.timeline.map(item => <article key={item.year}><b>{item.year}</b><p>{item.text}</p></article>)}</div></section>
     <section className="case-section"><SectionTitle title="Personas del expediente" /><div className="case-cast">{mysteryCase.cast.map(person => <article key={person.name}><strong>{person.name}</strong><p>{person.role}</p></article>)}</div></section>

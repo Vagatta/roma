@@ -17,10 +17,22 @@ export interface DuelChallenge {
 export interface DuelResult { id: string; title: string; category: DuelCategory; winner: Player | null; date: string; detail?: string; }
 export interface DuelState { target: number; scores: [number, number]; rounds: DuelResult[]; current?: DuelChallenge; turn: Player; }
 export interface MysteryState { caseId?: string; cluesFound: string[]; turn: Player; solved?: boolean; attempts: number; verdict?: string; }
+export interface RadarState { id: string; seed: number; round: number; }
+export interface RadarPick {
+  id: string; sessionId: string; round: number; player: Player;
+  answer: number; prediction: number; bet: boolean; date: string;
+}
+export type ExpeditionTheme = 'chaos' | 'exploration' | 'night';
+export interface Expedition {
+  id: string; theme: ExpeditionTheme; setting: 'anywhere' | 'rome'; startedAt: string;
+  photoMissionId: string; cardId: string; finaleOptions: [string, string]; branch?: Player;
+}
+export interface PlaceStoryChoice { choice: Player; date: string; response?: string; completedAt?: string; }
 export interface Mission {
   id: string; title: string; description: string; category: Category; difficulty: Difficulty;
   points: number; duration: number; intensity: Intensity; location?: string;
-  requiresConsent: boolean; requiresPhoto?: boolean; indoor?: boolean; mode: 'solo' | 'together'; scoreCategory: ScoreCategory;
+  requiresConsent: boolean; requiresPhoto?: boolean; requiresPeerValidation?: boolean; indoor?: boolean; anywhere?: boolean;
+  mode: 'solo' | 'together'; scoreCategory: ScoreCategory;
 }
 export interface Card {
   id: string; title: string; description: string; deck: Deck; difficulty: Difficulty;
@@ -31,13 +43,25 @@ export interface Entry {
   player: Player; points: number; shared: number; date: string; scoreCategory: ScoreCategory;
 }
 export interface Secret { id: string; player: Player; missionId: string; revealed: boolean; completed: boolean; }
+export interface PhotoSubmission {
+  id: string; missionId: string; player: Player; status: 'pending' | 'approved' | 'rejected';
+  submittedAt: string; decidedBy?: Player; decidedAt?: string;
+}
 export interface Draw { cardId: string; date: string; status: 'drawn' | 'completed' | 'skipped'; }
 export interface Game {
   version: 1; names: [string, string]; start?: string; end?: string; goal: number; intensity: Intensity;
+  activeMissionId?: string;
   entries: Entry[]; draws: Draw[]; favorites: string[]; visited: string[]; secrets: Secret[];
+  photoSubmissions?: PhotoSubmission[];
   unlocked: string[]; doubleNext: boolean; dailyPromptDate?: string; photos?: Record<string, string>; route?: string[]; favoritePhotos?: string[];
   routeMoments?: Record<string, TripMoment>; expenses?: TripExpense[]; dailyBudget?: number;
   adultConfirmed?: boolean;
   duel?: DuelState;
   mystery?: MysteryState;
+  radar?: RadarState;
+  radarPicks?: RadarPick[];
+  expeditions?: Expedition[];
+  photoCaptions?: Record<string, string>;
+  visitDates?: Record<string, string>;
+  placeStories?: Record<string, PlaceStoryChoice>;
 }

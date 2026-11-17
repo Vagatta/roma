@@ -230,13 +230,19 @@ begin
       merged_value := public.merge_room_array(base_value, next_value, current_value, '__entry');
     elsif field_name = 'secrets' then
       merged_value := public.merge_room_array(base_value, next_value, current_value, 'id');
+    elsif field_name = 'photoSubmissions' then
+      merged_value := public.merge_room_array(base_value, next_value, current_value, 'id');
+    elsif field_name = 'radarPicks' then
+      merged_value := public.merge_room_array(base_value, next_value, current_value, 'id');
+    elsif field_name = 'expeditions' then
+      merged_value := public.merge_room_array(base_value, next_value, current_value, 'id');
     elsif field_name = 'expenses' then
       merged_value := public.merge_room_array(base_value, next_value, current_value, 'id');
     elsif field_name = 'draws' then
       merged_value := public.merge_room_array(base_value, next_value, current_value, '__draw');
     elsif field_name in ('favorites', 'visited', 'unlocked', 'favoritePhotos') then
       merged_value := public.merge_room_array(base_value, next_value, current_value, '__scalar');
-    elsif field_name in ('photos', 'routeMoments') then
+    elsif field_name in ('photos', 'routeMoments', 'photoCaptions', 'visitDates', 'placeStories') then
       merged_value := public.merge_room_object(base_value, next_value, current_value);
     elsif next_value is distinct from base_value then
       merged_value := next_value;

@@ -1,5 +1,5 @@
-const CACHE = 'roma-static-v7';
-const PAGES = ['/', '/game', '/missions', '/cards', '/map', '/duel', '/mystery', '/memories', '/recap', '/achievements', '/settings'];
+const CACHE = 'roma-static-v9';
+const PAGES = ['/', '/game', '/missions', '/cards', '/map', '/duel', '/radar', '/mystery', '/memories', '/recap', '/achievements', '/settings'];
 self.addEventListener('install', event => {
   event.waitUntil((async () => {
     const cache = await caches.open(CACHE);

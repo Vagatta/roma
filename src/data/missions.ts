@@ -1,6 +1,6 @@
 import type { Mission, Category, Difficulty, Intensity, ScoreCategory } from '../lib/types';
 
-type Seed = [string, string, string?, boolean?];
+type Seed = [string, string, string?, boolean?, boolean?, boolean?];
 const groups: { category: Category; intensity: Intensity; score: ScoreCategory; items: Seed[] }[] = [
   { category: 'Tourist Challenge', intensity: 'playful', score: 'Adventure', items: [
     ['Encuadre de gladiadores', 'Haz una foto creativa en el Coliseo.', 'colosseum'],
@@ -30,6 +30,24 @@ const groups: { category: Category; intensity: Intensity; score: ScoreCategory; 
     ['Roma bajo Roma', 'Imaginad qué historia os gustaría descubrir bajo la basílica.', 'san-clemente'],
     ['Geometría inesperada', 'Fotografía la pirámide y buscad líneas que formen un triángulo perfecto.', 'piramide'],
     ['La plaza redonda', 'Rodead la plaza y escoged el mejor punto para mirar sus fuentes.', 'repubblica'],
+    ['El rostro escondido', 'Encontrad una cara tallada en una fachada o un relieve. Fotografiadla de cerca para que se reconozca.', undefined, undefined, true],
+    ['Un animal de piedra', 'Buscad un animal esculpido en una fuente, columna o fachada y haced una foto donde se vea el detalle.', undefined, undefined, true],
+    ['La señal más rara', 'Fotografiad una placa, señal o nombre de calle que os resulte inesperado. Debe poder leerse en la imagen.', undefined, undefined, true],
+    ['Un objeto fuera de lugar', 'Encontrad un objeto moderno que contraste con un edificio antiguo. Haced una foto donde se vean ambos.', undefined, undefined, true],
+    ['Ventana imposible', 'Buscad una ventana con una forma, decoración o vista curiosa. Fotografiadla entera, no solo un recorte.', undefined, undefined, true],
+    ['Detalle reutilizado', 'Localizad una piedra, columna o inscripción antigua reutilizada en otro edificio y fotografiad el contexto.', undefined, undefined, true],
+    ['El pequeño santuario', 'Encontrad una imagen o pequeño altar en una pared de la calle. Fotografiadlo sin incluir a personas reconocibles.', undefined, undefined, true],
+    ['Perspectiva que engaña', 'Haced una foto que parezca cambiar el tamaño o la distancia entre dos elementos. El otro jugador debe poder identificar el truco.', undefined, undefined, true],
+    ['La sombra rebelde', 'Fotografiad una sombra que parezca otra cosa. La otra persona debe reconocer la forma.', undefined, true, true, true],
+    ['Cara accidental', 'Encontrad una cara formada por objetos cotidianos y haced una foto donde se vea entera.', undefined, true, true, true],
+    ['Un color intruso', 'Fotografiad un color que destaque muchísimo entre todo lo que lo rodea.', undefined, true, true, true],
+    ['Textura de otro mundo', 'Haced una foto de cerca a una textura normal que parezca de otro planeta.', undefined, true, true, true],
+    ['El objeto equivocado', 'Fotografiad un objeto que parezca fuera de lugar y mostrad el contexto.', undefined, true, true, true],
+    ['Geometría doméstica', 'Encontrad tres formas geométricas en el mismo encuadre y fotografiadlas.', undefined, true, true, true],
+    ['Inventario improbable', 'Elegid tres objetos cercanos que tengan algo inesperado en común y defended vuestra teoría.', undefined, true, undefined, true],
+    ['Una esquina, dos historias', 'Escoged un rincón a la vista e inventad dos historias incompatibles sobre él.', undefined, true, undefined, true],
+    ['Museo de lo cotidiano', 'Elegid un objeto normal y presentadlo como si fuese la pieza estrella de un museo.', undefined, true, undefined, true],
+    ['La ruta mínima', 'Explorad un espacio cercano y volved con un detalle que ninguno había notado.', undefined, true, undefined, true],
   ] },
   { category: 'Italian Chaos', intensity: 'playful', score: 'Creativity', items: [
     ['¿Hablas italiano?', 'Pide un aperitivo o una bebida usando un poco de italiano.'],
@@ -57,6 +75,10 @@ const groups: { category: Category; intensity: Intensity; score: ScoreCategory; 
     ['Postal de memoria', 'Describid un lugar de Roma como si lo contarais en una carta, sin hacer una foto.', undefined, true],
     ['Museo de bolsillo', 'Elegid un objeto cotidiano de la mesa y contad su historia como si fuera una pieza de museo.', undefined, true],
     ['Brindis narrado', 'Inventad un brindis de una frase para el capítulo de Roma que estáis viviendo.', undefined, true],
+    ['Publicidad imposible', 'Vended un objeto de la habitación como si fuera una novedad revolucionaria.', undefined, true, undefined, true],
+    ['Noticia urgente', 'Improvisad un informativo sobre algo totalmente insignificante que acaba de pasar.', undefined, true, undefined, true],
+    ['El testigo', 'Uno inventa un suceso absurdo y el otro hace tres preguntas para desmontarlo.', undefined, true, undefined, true],
+    ['Regla nueva', 'Inventad una regla ridícula para el siguiente minuto y tratad de cumplirla.', undefined, true, undefined, true],
   ] },
   { category: 'Flirt Mode', intensity: 'flirty', score: 'Chemistry', items: [
     ['Verdad o copia', 'Por turnos de diez segundos, cada uno dice una verdad coqueta o copia la respuesta del otro; quien dude, baila.'],
@@ -128,11 +150,15 @@ const groups: { category: Category; intensity: Intensity; score: ScoreCategory; 
     ['Roma dormida', 'Fotografía el monumento más vacío que encontréis de noche.', 'pantheon'],
     ['Última copa', 'Elegid un rincón con encanto para la última bebida de la noche.', 'navona'],
     ['El resumen', 'Cada uno resume el día en una sola frase antes de dormir.'],
+    ['Sombras en escena', 'Apagad una luz y cread una escena con sombras; la otra persona adivina qué representa.', undefined, true, undefined, true],
+    ['La hora extraña', 'Inventad el título de una película que empiece exactamente donde estáis ahora.', undefined, true, undefined, true],
+    ['Banda sonora secreta', 'Elegid por separado una canción para este momento y justificad vuestra elección.', undefined, true, undefined, true],
+    ['Final alternativo', 'Cada uno propone un final inesperado para el día; escoged el más divertido.', undefined, true, undefined, true],
   ] },
 ];
 const points: Record<Difficulty, number> = { Easy: 5, Medium: 10, Hard: 15, Special: 20 };
 export const missions: Mission[] = groups.flatMap(({ category, intensity, score, items }, group) =>
-  items.map(([title, description, location, indoor], index) => {
+  items.map(([title, description, location, indoor, peerValidation, anywhere], index) => {
     const difficulty: Difficulty = index % 6 === 5 ? 'Hard' : index % 3 === 0 ? 'Easy' : 'Medium';
     const requiresConsent = (group === 2 && [0, 16].includes(index)) ||
       group === 3 ||
@@ -142,6 +168,8 @@ export const missions: Mission[] = groups.flatMap(({ category, intensity, score,
       points: points[difficulty], duration: 5 + (index % 4) * 10, intensity: category === 'Night Mode' && index === 4 ? 'sensual' : category === 'Temptation Mode' ? 'daring' : intensity,
       ...(location ? { location } : {}), requiresConsent,
       requiresPhoto: /fotograf|foto|retrato|postal|vídeo|video|selfie|imagen/i.test(description),
+      ...(peerValidation ? { requiresPeerValidation: true } : {}),
+      ...(anywhere ? { anywhere: true } : {}),
       ...(indoor ? { indoor: true } : {}),
       mode: index % 5 === 0 && !requiresConsent ? 'solo' : 'together', scoreCategory: score,
     };

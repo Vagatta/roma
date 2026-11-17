@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { missions } from '../data/missions';
 import { cards } from '../data/cards';
 import type { Game, Entry, Player, Intensity, Mission, Card } from './types';
+import { decidePhotoSubmission, queuePhotoSubmission } from './photo-validation';
 
 export const levels: Intensity[] = ['playful', 'flirty', 'sensual', 'daring'];
 export const allowed = (game: Game, intensity: Intensity) => levels.indexOf(intensity) <= levels.indexOf(game.intensity);
@@ -15,10 +16,16 @@ const duelCategorySchema = z.enum(['Rapidez', 'Memoria', 'Estimación', 'Creativ
 export const gameSchema = z.object({
   version: z.literal(1), names: z.tuple([z.string().min(1), z.string().min(1)]),
   start: z.string().optional(), end: z.string().optional(), goal: z.number().int().min(1).max(300),
+  activeMissionId: z.string().optional(),
   intensity: z.enum(['playful', 'flirty', 'sensual', 'daring']), entries: z.array(entrySchema),
   draws: z.array(z.object({ cardId: z.string(), date: z.string(), status: z.enum(['drawn', 'completed', 'skipped']) })),
   favorites: z.array(z.string()), visited: z.array(z.string()),
   secrets: z.array(z.object({ id: z.string(), player: z.union([z.literal(0), z.literal(1)]), missionId: z.string(), revealed: z.boolean(), completed: z.boolean() })),
+  photoSubmissions: z.array(z.object({
+    id: z.string(), missionId: z.string(), player: z.union([z.literal(0), z.literal(1)]),
+    status: z.enum(['pending', 'approved', 'rejected']), submittedAt: z.string(),
+    decidedBy: z.union([z.literal(0), z.literal(1)]).optional(), decidedAt: z.string().optional(),
+  })).optional(),
   unlocked: z.array(z.string()), doubleNext: z.boolean(), dailyPromptDate: z.string().optional(),
   photos: z.record(z.string(), z.string()).optional(),
   route: z.array(z.string()).optional(),
@@ -52,6 +59,23 @@ export const gameSchema = z.object({
     cluesFound: z.array(z.string()), turn: z.union([z.literal(0), z.literal(1)]),
     solved: z.boolean().optional(), attempts: z.number().int().nonnegative(), verdict: z.string().optional(),
   }).optional(),
+  radar: z.object({ id: z.string(), seed: z.number().int().nonnegative(), round: z.number().int().min(0).max(6) }).optional(),
+  radarPicks: z.array(z.object({
+    id: z.string(), sessionId: z.string(), round: z.number().int().min(0).max(6),
+    player: z.union([z.literal(0), z.literal(1)]), answer: z.number().int().min(0).max(2),
+    prediction: z.number().int().min(0).max(2), bet: z.boolean(), date: z.string(),
+  })).optional(),
+  expeditions: z.array(z.object({
+    id: z.string(), theme: z.enum(['chaos', 'exploration', 'night']), setting: z.enum(['anywhere', 'rome']), startedAt: z.string(),
+    photoMissionId: z.string(), cardId: z.string(), finaleOptions: z.tuple([z.string(), z.string()]),
+    branch: z.union([z.literal(0), z.literal(1)]).optional(),
+  })).optional(),
+  photoCaptions: z.record(z.string(), z.string().max(120)).optional(),
+  visitDates: z.record(z.string(), z.string()).optional(),
+  placeStories: z.record(z.string(), z.object({
+    choice: z.union([z.literal(0), z.literal(1)]), date: z.string(),
+    response: z.string().max(120).optional(), completedAt: z.string().optional(),
+  })).optional(),
 });
 export const KEY = 'roma-secret-game:v1';
 export function readGame(): Game | null {
@@ -101,7 +125,7 @@ export function mergeGameStates(base: Game, local: Game, remote: Game): Game {
     const baseValue = (base as unknown as Record<string, unknown>)[field];
     const localValue = (local as unknown as Record<string, unknown>)[field];
     const remoteValue = (remote as unknown as Record<string, unknown>)[field];
-    if (field === 'entries' || field === 'secrets') {
+    if (field === 'entries' || field === 'secrets' || field === 'photoSubmissions' || field === 'radarPicks' || field === 'expeditions') {
       (merged as unknown as Record<string, unknown>)[field] = mergeRecords(
         (baseValue ?? []) as Record<string, unknown>[],
         (localValue ?? []) as Record<string, unknown>[],
@@ -128,7 +152,7 @@ export function mergeGameStates(base: Game, local: Game, remote: Game): Game {
         (localValue ?? []) as string[],
         (remoteValue ?? []) as string[],
       );
-    } else if (field === 'photos' || field === 'routeMoments') {
+    } else if (field === 'photos' || field === 'routeMoments' || field === 'photoCaptions' || field === 'visitDates' || field === 'placeStories') {
       const baseObject = (baseValue ?? {}) as Record<string, unknown>;
       const localObject = (localValue ?? {}) as Record<string, unknown>;
       const remoteObject = (remoteValue ?? {}) as Record<string, unknown>;
@@ -175,7 +199,7 @@ export const today = () => new Date().toLocaleDateString('en-CA');
 export const todayCount = (game: Game) => missionEntries(game).filter(e => new Date(e.date).toLocaleDateString('en-CA') === today()).length;
 export const uniqueId = () => crypto.randomUUID();
 export const randomOne = <T,>(items: T[]): T | undefined => items[Math.floor(Math.random() * items.length)];
-export function award(game: Game, item: Mission | Card, kind: Entry['kind'], player: Player, entryId = uniqueId()): Game {
+export function award(game: Game, item: Mission | Card, kind: Entry['kind'], player: Player, entryId: string = uniqueId()): Game {
   if (game.entries.some(e => e.kind === kind && e.itemId === item.id)) return game;
   const points = item.points * (game.doubleNext ? 2 : 1);
   const together = kind === 'card' || (kind === 'mission' && 'mode' in item && item.mode === 'together');
@@ -183,6 +207,17 @@ export function award(game: Game, item: Mission | Card, kind: Entry['kind'], pla
   const entry: Entry = { id: entryId, kind, itemId: item.id, title: item.title, player, points,
     shared: together ? points : 0, date: new Date().toISOString(), scoreCategory };
   return { ...game, entries: [entry, ...game.entries], doubleNext: false };
+}
+export function submitPhotoMission(game: Game, mission: Mission, player: Player, id = uniqueId(), submittedAt = new Date().toISOString()): Game {
+  return queuePhotoSubmission(game, mission, player, id, submittedAt);
+}
+export function reviewPhotoSubmission(game: Game, id: string, reviewer: Player, approved: boolean, decidedAt = new Date().toISOString()): Game {
+  const submission = game.photoSubmissions?.find(item => item.id === id);
+  if (!submission || submission.status !== 'pending' || submission.player === reviewer) return game;
+  const mission = missions.find(item => item.id === submission.missionId);
+  if (!mission || (approved && game.entries.some(entry => entry.kind === 'mission' && entry.itemId === mission.id))) return game;
+  const reviewed = decidePhotoSubmission(game, id, reviewer, approved, decidedAt);
+  return approved ? award(reviewed, mission, 'mission', submission.player, submission.id) : reviewed;
 }
 export const achievementList = [
   { id: 'first', title: 'Primera misión', description: 'Completa tu primer reto.', icon: '✦', test: (g: Game) => completedCount(g) >= 1 },

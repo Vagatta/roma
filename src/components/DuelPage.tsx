@@ -5,6 +5,7 @@ import { uniqueId } from '../lib/game';
 import { chooseDuelChallenge, closestEstimate, countRecalled, fastestReaction, gestureWinner, higherScore, validSpeedAnswers } from '../lib/duel';
 import type { Gesture } from '../lib/duel';
 import type { DuelChallenge, DuelState, Game, Player } from '../lib/types';
+import ModeRules from './ModeRules';
 
 type FinishRound = (winner: Player | null, detail: string) => void;
 
@@ -295,6 +296,7 @@ export default function DuelPage({ game, update }: { game: Game; update: (fn: (g
 
   return <div className="content-wrap duel-page">
     <div className="page-heading"><span className="eyebrow">PARA DOS · UN SOLO DISPOSITIVO</span><h1>Duelo<br /><em>cara a cara.</em></h1><p>Retos sorpresa de rapidez, memoria, estimación, reflejos y estrategia. No repetís un reto durante la partida ni el tipo de prueba de las dos rondas anteriores. Un punto por victoria; alternáis quién empieza.</p></div>
+    <ModeRules mode="duel" initiallyOpen={duel.rounds.length === 0 && !duel.current} />
     <div className="duel-scoreboard">{game.names.map((name, player) => <div className={winner === player ? 'duel-score winner' : 'duel-score'} key={player}><span>{player === 0 ? 'JUGADOR 1' : 'JUGADOR 2'}</span><strong>{duel.scores[player]}</strong><b>{name}</b></div>)}</div>
     <div className="duel-controls"><label>Primero en llegar a <select value={duel.target} disabled={duel.rounds.length > 0 || Boolean(duel.current)} title="Reinicia el duelo para cambiar la meta" onChange={event => update(g => ({ ...g, duel: { ...(g.duel ?? empty), target: Number(event.target.value) } }))}><option value="3">3 puntos</option><option value="5">5 puntos</option><option value="7">7 puntos</option></select></label><button className="quiet-button" onClick={() => setConfirmReset(true)}>Reiniciar duelo</button></div>
     {(duel.rounds.length > 0 || duel.current) && <p className="duel-target-note">Para cambiar la meta, reiniciad el duelo.</p>}
